@@ -12,7 +12,7 @@ select,input[type=number],input[type=text],textarea{width:100%;background:#0d152
 table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:8px 7px;border-bottom:1px solid var(--border);white-space:nowrap;text-align:left}th{font-size:11px;color:#b7c3d9}.scroll{overflow:auto}.sep{height:1px;background:var(--border);margin:13px 0}.tabs{display:flex;gap:5px;flex-wrap:wrap}.tab.active{background:#1769aa}.callout{border-left:4px solid var(--accent);padding-left:10px}
 @media(max-width:950px){.g4,.g3,.g2{grid-template-columns:1fr 1fr}}@media(max-width:620px){.g4,.g3,.g2{grid-template-columns:1fr}}
 </style></head><body><div class="wrap">
-<div class="title"><div><h1>NFL Survivor Planner</h1><div class="sub">One-click weekly refresh + full-slate planning + live odds + modeled future games + Survivor ownership · Fast optimizer</div></div><div class="row"><div class="pill" id="liveStatus">Odds: manual</div><div class="pill" id="modelStatus">Future model: seed</div><div class="pill" id="ownStatus">Ownership: manual</div></div></div>
+<div class="title"><div><h1>NFL Survivor Planner</h1><div class="sub">One-click weekly refresh + full-slate planning + season-long two-entry portfolio optimization · Fast optimizer</div></div><div class="row"><div class="pill" id="liveStatus">Odds: manual</div><div class="pill" id="modelStatus">Future model: seed</div><div class="pill" id="ownStatus">Ownership: manual</div></div></div>
 
 <div class="grid g4" style="margin-top:16px">
 <div class="card"><div class="k">Pool size</div><div class="v"><input id="pool" type="number" value="152"></div></div>
@@ -66,7 +66,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:8px 7px;b
 </div>
 
 <div class="card" style="margin-top:14px">
-<div class="row spread"><div><div class="big">Optimized 18-week map</div><div class="tiny">Each entry can use a team only once. Click a week to inspect/edit that week.</div></div><div id="status" class="pill">Ready</div></div>
+<div class="row spread"><div><div class="big">Optimized 18-week map</div><div class="tiny">Both entries are optimized jointly across the remaining season. Each entry can use a team only once; repeated A/B correlation is penalized unless the safety advantage is compelling.</div></div><div id="status" class="pill">Ready</div></div>
 <div class="scroll" style="margin-top:10px"><table><thead><tr><th>Week</th><th>Entry A</th><th>A Win%</th><th>Entry B</th><th>B Win%</th><th>Same?</th><th>Read</th></tr></thead><tbody id="pathBody"></tbody></table></div>
 </div>
 
@@ -128,32 +128,107 @@ function used(id){return new Set($(id).value.split(",").map(x=>x.trim().toUpperC
 function tscore(r){let w=W(),p=r.p/100,o=r.own/100,use=1-r.future/100;return 100*(w.s*p+w.l*p*(1-o)+w.f*use)}
 function pair(a,b){let pa=a.p/100,pb=b.p/100,same=a.team===b.team,w=W(),one=same?pa:1-(1-pa)*(1-pb),both=same?pa:pa*pb,bonus=same?0:w.d*100*Math.min(pa,pb),gap=Math.max(0,Math.abs(pa-pb)-.10)*20;return{a,b,one,both,same,score:(tscore(a)+tscore(b))/2+bonus-gap}}
 function forcePair(){let v=$("force").value;if(!v)return[null,null];let a=v.split("+").map(x=>x.trim());return[a[0],a[1]]}
-function bestPath(start,u,forced=null){
-  const BEAM=120;
-  let states=[{sc:0,path:[],used:new Set(u)}];
+
+function jointBestPaths(start,usedASet,usedBSet,forcedA=null,forcedB=null){
+  const BEAM=220;
+  let states=[{
+    sc:0,
+    pathA:[],
+    pathB:[],
+    usedA:new Set(usedASet),
+    usedB:new Set(usedBSet)
+  }];
+
   for(let w=start;w<=18;w++){
     let next=[];
+    const optsAAll=wr(w);
+    const optsBAll=wr(w);
+
     for(const st of states){
-      let opts=wr(w).filter(r=>!st.used.has(r.team));
-      if(w===start && forced) opts=opts.filter(r=>r.team===forced);
-      for(const r of opts){
-        const nu=new Set(st.used); nu.add(r.team);
-        const local=Math.log(Math.max(.01,r.p/100))*72+tscore(r);
-        next.push({sc:st.sc+local,path:[...st.path,r],used:nu});
+      let optsA=optsAAll.filter(r=>!st.usedA.has(r.team));
+      let optsB=optsBAll.filter(r=>!st.usedB.has(r.team));
+
+      if(w===start && forcedA) optsA=optsA.filter(r=>r.team===forcedA);
+      if(w===start && forcedB) optsB=optsB.filter(r=>r.team===forcedB);
+
+      for(const a of optsA){
+        for(const b of optsB){
+          const ua=new Set(st.usedA); ua.add(a.team);
+          const ub=new Set(st.usedB); ub.add(b.team);
+
+          const pa=a.p/100, pb=b.p/100;
+          const baseA=Math.log(Math.max(.01,pa))*72+tscore(a);
+          const baseB=Math.log(Math.max(.01,pb))*72+tscore(b);
+
+          // Portfolio value:
+          // reward diversification across different game outcomes,
+          // but don't accept a huge win-probability sacrifice just to be different.
+          const same=a.team===b.team;
+          const diversifyBonus=same ? -8 : W().d*100*Math.min(pa,pb);
+          const safetyGapPenalty=Math.max(0,Math.abs(pa-pb)-.12)*18;
+
+          // Extra future correlation penalty so paths don't collapse onto
+          // the same team every week unless the safety edge is compelling.
+          const correlationPenalty=same ? 10 : 0;
+
+          const local=baseA+baseB+diversifyBonus-correlationPenalty-safetyGapPenalty;
+
+          next.push({
+            sc:st.sc+local,
+            pathA:[...st.pathA,a],
+            pathB:[...st.pathB,b],
+            usedA:ua,
+            usedB:ub
+          });
+        }
       }
     }
-    if(!next.length) return {sc:-1e9,path:[]};
-    next.sort((a,b)=>b.sc-a.sc);
-    states=next.slice(0,BEAM);
+
+    if(!next.length) return {sc:-1e9,pathA:[],pathB:[]};
+
+    // Keep diverse beam states; score first, then de-duplicate by used-team signatures.
+    next.sort((x,y)=>y.sc-x.sc);
+    const seen=new Set(), pruned=[];
+    for(const st of next){
+      const key=[...st.usedA].sort().join(",")+"|"+[...st.usedB].sort().join(",");
+      if(seen.has(key)) continue;
+      seen.add(key);
+      pruned.push(st);
+      if(pruned.length>=BEAM) break;
+    }
+    states=pruned;
   }
-  return states[0]||{sc:-1e9,path:[]};
+
+  return states[0]||{sc:-1e9,pathA:[],pathB:[]};
 }
+
 function optimize(){
- let start=+$("currentWeek").value,fp=forcePair(),A=bestPath(start,used("usedA"),fp[0]),B=bestPath(start,used("usedB"),fp[1]);
- if(!fp[1]&&A.path.length){let ar=A.path[0],best=null,bestAdj=-1e9;for(const cand of wr(start).filter(r=>!used("usedB").has(r.team))){let t=bestPath(start,used("usedB"),cand.team),m=pair(ar,cand),adj=t.sc+(m.same?0:W().d*100*Math.min(ar.p,cand.p)/100)-Math.max(0,Math.abs(ar.p-cand.p)-10)*.25;if(adj>bestAdj){bestAdj=adj;best=t}}B=best||B}
- lastA=A.path;lastB=B.path;renderPath(A.path,B.path,start);if(A.path[0])$("nextA").textContent=A.path[0].team;if(B.path[0])$("nextB").textContent=B.path[0].team;
- let a=A.path[0],b=B.path[0];if(a&&b){let m=pair(a,b);$("one").textContent=pct(m.one);$("both").textContent=pct(m.both);$("survA").textContent=pct(A.path.reduce((z,r)=>z*r.p/100,1));$("survB").textContent=pct(B.path.reduce((z,r)=>z*r.p/100,1));$("why").innerHTML=m.same?`Both entries use <b>${a.team}</b>. This concentrates risk in exchange for maximum faith in the safest path.`:`<b>${a.team} + ${b.team}</b> splits game-outcome risk. ${a.team} is ${a.p.toFixed(1)}% to win; ${b.team} is ${b.p.toFixed(1)}%, with ${b.own.toFixed(1)}% projected ownership and future-value cost ${b.future}.`}
- $("status").textContent="Optimized";renderPairs();
+  const start=+$("currentWeek").value;
+  const fp=forcePair();
+  const result=jointBestPaths(start,used("usedA"),used("usedB"),fp[0],fp[1]);
+
+  lastA=result.pathA;
+  lastB=result.pathB;
+
+  renderPath(lastA,lastB,start);
+
+  if(lastA[0]) $("nextA").textContent=lastA[0].team;
+  if(lastB[0]) $("nextB").textContent=lastB[0].team;
+
+  const a=lastA[0], b=lastB[0];
+  if(a&&b){
+    const m=pair(a,b);
+    $("one").textContent=pct(m.one);
+    $("both").textContent=pct(m.both);
+    $("survA").textContent=pct(lastA.reduce((z,r)=>z*r.p/100,1));
+    $("survB").textContent=pct(lastB.reduce((z,r)=>z*r.p/100,1));
+    $("why").innerHTML=m.same
+      ? `Both entries use <b>${a.team}</b> this week because the model judges the safety edge large enough to justify correlation.`
+      : `<b>${a.team} + ${b.team}</b> is the jointly optimized portfolio. The engine now evaluates diversification across the <b>entire remaining season</b>, not just the current week.`;
+  }
+
+  $("status").textContent="Jointly optimized";
+  renderPairs();
 }
 function renderPath(A,B,start){let tb=$("pathBody");tb.innerHTML="";for(let w=start;w<=18;w++){let a=A[w-start],b=B[w-start];tb.insertAdjacentHTML("beforeend",`<tr><td><button class="wk" data-w="${w}">W${w}</button></td><td>${a?.team||"—"}</td><td>${a?a.p.toFixed(1)+"%":"—"}</td><td>${b?.team||"—"}</td><td>${b?b.p.toFixed(1)+"%":"—"}</td><td>${a&&b&&a.team===b.team?"YES":"No"}</td><td class="tiny">${a&&b&&a.team===b.team?"Correlated":"Diversified"}</td></tr>`)}tb.querySelectorAll(".wk").forEach(x=>x.onclick=()=>{activeWeek=+x.dataset.w;renderTabs();renderBoard()})}
 function renderTabs(){let t=$("tabs");t.innerHTML="";for(let w=1;w<=18;w++){let b=document.createElement("button");b.textContent="W"+w;b.className="tab"+(w===activeWeek?" active":"");b.onclick=()=>{activeWeek=w;renderTabs();renderBoard()};t.appendChild(b)}}

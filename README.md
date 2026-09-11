@@ -49,3 +49,9 @@ Use **Refresh Everything + Optimize**. It runs, in order:
 
 The summary shows total team-game rows, LIVE vs MODEL rows, ownership updates, and the recommended next pair.
 Monte Carlo remains manual.
+
+## V8 joint portfolio optimizer
+The two entries are now optimized jointly across every remaining week.
+- Each entry may use a team only once.
+- Same-team picks across Entry A and Entry B are penalized each week unless the win-probability advantage is compelling.
+- Diversification is therefore a season-long decision, not merely a Week 1 adjustment.
