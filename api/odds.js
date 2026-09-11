@@ -6,6 +6,9 @@ export default async function handler(req, res) {
     url.searchParams.set("leagueID", "NFL");
     url.searchParams.set("oddsAvailable", "true");
     url.searchParams.set("limit", "100");
+    url.searchParams.set("oddID", "points-home-game-ml-home,points-away-game-ml-away");
+    url.searchParams.set("startsAfter", "2026-09-09T00:00:00.000Z");
+    url.searchParams.set("startsBefore", "2027-01-05T23:59:59.000Z");
     const r = await fetch(url, { headers: { "x-api-key": apiKey } });
     const body = await r.text();
     res.setHeader("Cache-Control", "s-maxage=300, stale-while-revalidate=600");
