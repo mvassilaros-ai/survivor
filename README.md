@@ -25,3 +25,7 @@ This package is designed for Vercel.
 
 ## Recommended next enhancement
 If you want shared synchronized state between you and your partner, add a small hosted database (e.g. Supabase) for pool settings, used teams and weekly ownership. The current package gives both users the same app and live odds, but each browser stores its own edits.
+
+
+## Refresh Ownership
+The app now includes a **Refresh Ownership** button. It calls `/api/ownership`, which pulls SurvivorGrid and imports the **Projected** ownership percentage for the selected week. No extra API key is required. Manual ownership edits remain available.

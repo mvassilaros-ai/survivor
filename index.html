@@ -12,7 +12,7 @@ select,input[type=number],input[type=text],textarea{width:100%;background:#0d152
 table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:8px 7px;border-bottom:1px solid var(--border);white-space:nowrap;text-align:left}th{font-size:11px;color:#b7c3d9}.scroll{overflow:auto}.sep{height:1px;background:var(--border);margin:13px 0}.tabs{display:flex;gap:5px;flex-wrap:wrap}.tab.active{background:#1769aa}.callout{border-left:4px solid var(--accent);padding-left:10px}
 @media(max-width:950px){.g4,.g3,.g2{grid-template-columns:1fr 1fr}}@media(max-width:620px){.g4,.g3,.g2{grid-template-columns:1fr}}
 </style></head><body><div class="wrap">
-<div class="title"><div><h1>NFL Survivor Planner</h1><div class="sub">18-week planning + market odds + ownership + two-entry portfolio + manual Monte Carlo · Fast optimizer</div></div><div class="pill" id="liveStatus">Market data: manual</div></div>
+<div class="title"><div><h1>NFL Survivor Planner</h1><div class="sub">18-week planning + live odds + live Survivor ownership + two-entry portfolio + manual Monte Carlo · Fast optimizer</div></div><div class="row"><div class="pill" id="liveStatus">Odds: manual</div><div class="pill" id="ownStatus">Ownership: manual</div></div></div>
 
 <div class="grid g4" style="margin-top:16px">
 <div class="card"><div class="k">Pool size</div><div class="v"><input id="pool" type="number" value="152"></div></div>
@@ -46,10 +46,16 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:8px 7px;b
 </div>
 
 <div class="card">
-<div class="big">Market data</div>
-<div class="tiny" style="margin-top:8px">If deployed with SPORTSGAMEODDS_API_KEY, this button fetches current NFL odds through the secure backend.</div>
-<div class="row" style="margin-top:12px"><button id="refreshOdds" class="primary">Refresh live odds</button><span id="oddsMsg" class="tiny"></span></div>
-<div class="sep"></div><div class="tiny">Ownership remains editable because the best source is ultimately your own pool after picks lock.</div>
+<div class="big">Live data</div>
+<div class="tiny" style="margin-top:8px">Odds come from SportsGameOdds. Public Survivor ownership comes from SurvivorGrid / PoolCrunch projected consensus.</div>
+<div class="row" style="margin-top:12px;flex-wrap:wrap">
+<button id="refreshOdds" class="primary">Refresh Live Odds</button>
+<button id="refreshOwnership">Refresh Ownership</button>
+</div>
+<div id="oddsMsg" class="tiny" style="margin-top:8px"></div>
+<div id="ownMsg" class="tiny" style="margin-top:4px"></div>
+<div class="sep"></div>
+<div class="tiny"><b>Before lock:</b> use projected public ownership. <b>After lock:</b> overwrite with your actual pool ownership when available.</div>
 </div>
 </div>
 
@@ -60,7 +66,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:8px 7px;b
 
 <div class="card" style="margin-top:14px">
 <div class="row spread"><div><div class="big">Weekly board</div><div class="tiny">Win %, ownership and future value are editable. Future weeks are planning projections until real markets appear.</div></div><div id="tabs" class="tabs"></div></div>
-<div class="scroll" style="margin-top:10px"><table><thead><tr><th>Team</th><th>Opp</th><th>Win %</th><th>Open %</th><th>Move</th><th>Ownership %</th><th>Future</th><th>Use score</th></tr></thead><tbody id="board"></tbody></table></div>
+<div class="scroll" style="margin-top:10px"><table><thead><tr><th>Team</th><th>Opp</th><th>Win %</th><th>Open %</th><th>Move</th><th>Public Ownership %</th><th>Future</th><th>Use score</th></tr></thead><tbody id="board"></tbody></table></div>
 </div>
 
 <div class="grid g2" style="margin-top:14px">
@@ -128,12 +134,38 @@ function extractFair(event,teamAbbr){
    let sideTeam=side==="home"?h:side==="away"?aw:"";if(sideTeam===teamAbbr){let p=americanToProb(o.fairOdds);if(p)vals.push(p)}}
  return vals.length?vals.reduce((a,b)=>a+b,0)/vals.length:null
 }
+async function refreshOwnership(){
+  $("ownMsg").textContent="Fetching projected Survivor ownership…";
+  try{
+    const week=+$("currentWeek").value;
+    const r=await fetch(`/api/ownership?week=${week}`);
+    if(!r.ok) throw new Error(await r.text());
+    const obj=await r.json();
+    const picks=obj.picks||{};
+    const aliases={WAS:"WSH",LA:"LAR"};
+    let n=0;
+    for(const row of wr(week)){
+      const k=(picks[row.team]!==undefined)?row.team:(aliases[row.team]||row.team);
+      if(picks[k]!==undefined){row.own=Number(picks[k]);n++;}
+    }
+    localStorage.setItem("survivor_final_rows",JSON.stringify(rows));
+    const stamp=obj.updatedAt?new Date(obj.updatedAt):new Date();
+    const pretty=stamp.toLocaleString([], {month:"short",day:"numeric",hour:"numeric",minute:"2-digit"});
+    $("ownMsg").textContent=`Updated ${n} teams from SurvivorGrid projected ownership · ${pretty}`;
+    $("ownStatus").textContent=`Ownership: ${pretty}`;
+    renderBoard();optimize();
+  }catch(e){
+    $("ownMsg").textContent="Ownership refresh unavailable; manual values remain.";
+    console.error(e);
+  }
+}
+
 async function refreshOdds(){
  $("oddsMsg").textContent="Fetching…";try{let r=await fetch("/api/odds");if(!r.ok)throw new Error(await r.text());let obj=await r.json(),events=obj.data||obj.events||[],n=0;
  for(const row of wr(+$("currentWeek").value)){for(const ev of events){let p=extractFair(ev,row.team);if(p){row.p=+(p*100).toFixed(1);n++;break}}}
- localStorage.setItem("survivor_final_rows",JSON.stringify(rows));$("oddsMsg").textContent=`Updated ${n} team probabilities.`;$("liveStatus").textContent="Market data: live backend";renderBoard();optimize()}catch(e){$("oddsMsg").textContent="Live odds unavailable; manual values remain.";console.error(e)}
+ localStorage.setItem("survivor_final_rows",JSON.stringify(rows));const pretty=new Date().toLocaleString([], {month:"short",day:"numeric",hour:"numeric",minute:"2-digit"});$("oddsMsg").textContent=`Updated ${n} team probabilities · ${pretty}`;$("liveStatus").textContent=`Odds: ${pretty}`;renderBoard();optimize()}catch(e){$("oddsMsg").textContent="Live odds unavailable; manual values remain.";console.error(e)}
 }
 for(let w=1;w<=18;w++)$("currentWeek").add(new Option("Week "+w,w));
-$("risk").oninput=()=>{updateWeights()};$("risk").onchange=()=>{renderBoard();optimize()};$("opt").onclick=optimize;$("force").onchange=optimize;$("currentWeek").onchange=()=>{activeWeek=+$("currentWeek").value;renderTabs();renderBoard();optimize()};$("usedA").onchange=optimize;$("usedB").onchange=optimize;$("pit").onclick=()=>{$("force").value="LAC + PIT";optimize()};$("reset").onclick=()=>{rows=structuredClone(SEED);localStorage.removeItem("survivor_final_rows");renderBoard();optimize()};$("mc").onclick=runMC;$("refreshOdds").onclick=refreshOdds;
+$("risk").oninput=()=>{updateWeights()};$("risk").onchange=()=>{renderBoard();optimize()};$("opt").onclick=optimize;$("force").onchange=optimize;$("currentWeek").onchange=()=>{activeWeek=+$("currentWeek").value;renderTabs();renderBoard();optimize()};$("usedA").onchange=optimize;$("usedB").onchange=optimize;$("pit").onclick=()=>{$("force").value="LAC + PIT";optimize()};$("reset").onclick=()=>{rows=structuredClone(SEED);localStorage.removeItem("survivor_final_rows");renderBoard();optimize()};$("mc").onclick=runMC;$("refreshOdds").onclick=refreshOdds;$("refreshOwnership").onclick=refreshOwnership;
 updateWeights();renderTabs();renderBoard();optimize();
 </script></body></html>
