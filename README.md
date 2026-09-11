@@ -55,3 +55,16 @@ The two entries are now optimized jointly across every remaining week.
 - Each entry may use a team only once.
 - Same-team picks across Entry A and Entry B are penalized each week unless the win-probability advantage is compelling.
 - Diversification is therefore a season-long decision, not merely a Week 1 adjustment.
+
+## V9 manual Entry A / optimized Entry B
+- You and your partner select the current-week Entry A team.
+- The optimizer treats that pick as fixed.
+- It then optimizes Entry B and both remaining season paths around that decision.
+- The ranking table now separates:
+  - current-week survival
+  - safety
+  - ownership leverage
+  - future-value gain
+  - current-week score
+  - full-season (18-week) portfolio score
+- The table is sorted by the full-season score and explicitly marks the recommended Entry B.
