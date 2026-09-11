@@ -69,9 +69,9 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:8px 7px;b
 </div>
 
 <div class="card" style="margin-top:14px">
-<div class="row spread"><div><div class="big">Week 1 Monte Carlo</div><div class="tiny">Simulates pool survival using entered market probabilities and ownership.</div></div><div class="row"><select id="sims" style="width:130px"><option>10000</option><option selected>50000</option><option>100000</option></select><button id="mc">Run</button></div></div>
-<div class="grid g4" style="margin-top:12px"><div><div class="tiny">Selected pair</div><div class="v" id="mcPair">—</div></div><div><div class="tiny">Avg surviving field*</div><div class="v" id="field">—</div></div><div><div class="tiny">Relative field equity*</div><div class="v" id="equity">—</div></div><div><div class="tiny">Simulation status</div><div class="v" id="mcStatus">Ready</div></div></div>
-<div class="tiny" style="margin-top:9px">*Week 1 relative decision metrics, not a claim of ultimate season win probability.</div>
+<div class="row spread"><div><div class="big">Week 1 Monte Carlo</div><div class="tiny">Simulates pool survival using entered market probabilities and ownership.</div></div><div class="row"><select id="sims" style="width:130px"><option>10000</option><option selected>50000</option><option>100000</option></select><button id="mc" class="primary">Run Monte Carlo</button></div></div>
+<div class="grid g4" style="margin-top:12px"><div><div class="tiny">Selected pair</div><div class="v" id="mcPair">—</div></div><div><div class="tiny">Avg surviving field*</div><div class="v" id="field">—</div></div><div><div class="tiny">Relative field equity*</div><div class="v" id="equity">—</div></div><div><div class="tiny">Simulation status</div><div class="v" id="mcStatus">Manual</div></div></div>
+<div class="tiny" style="margin-top:9px">*Monte Carlo is manual only. It will run only when you click <b>Run Monte Carlo</b>. Week 1 relative decision metrics, not a claim of ultimate season win probability.</div>
 </div>
 </div>
 
@@ -119,6 +119,6 @@ async function refreshOdds(){
  localStorage.setItem("survivor_final_rows",JSON.stringify(rows));$("oddsMsg").textContent=`Updated ${n} team probabilities.`;$("liveStatus").textContent="Market data: live backend";renderBoard();optimize()}catch(e){$("oddsMsg").textContent="Live odds unavailable; manual values remain.";console.error(e)}
 }
 for(let w=1;w<=18;w++)$("currentWeek").add(new Option("Week "+w,w));
-$("risk").oninput=()=>{updateWeights();renderBoard();optimize()};$("risk").onchange=()=>{runMC()};$("opt").onclick=optimize;$("force").onchange=optimize;$("currentWeek").onchange=()=>{activeWeek=+$("currentWeek").value;renderTabs();renderBoard();optimize()};$("usedA").onchange=optimize;$("usedB").onchange=optimize;$("pit").onclick=()=>{$("force").value="LAC + PIT";optimize()};$("reset").onclick=()=>{rows=structuredClone(SEED);localStorage.removeItem("survivor_final_rows");renderBoard();optimize()};$("mc").onclick=runMC;$("refreshOdds").onclick=refreshOdds;
-updateWeights();renderTabs();renderBoard();optimize();runMC();
+$("risk").oninput=()=>{updateWeights();renderBoard();optimize()};$("opt").onclick=optimize;$("force").onchange=optimize;$("currentWeek").onchange=()=>{activeWeek=+$("currentWeek").value;renderTabs();renderBoard();optimize()};$("usedA").onchange=optimize;$("usedB").onchange=optimize;$("pit").onclick=()=>{$("force").value="LAC + PIT";optimize()};$("reset").onclick=()=>{rows=structuredClone(SEED);localStorage.removeItem("survivor_final_rows");renderBoard();optimize()};$("mc").onclick=runMC;$("refreshOdds").onclick=refreshOdds;
+updateWeights();renderTabs();renderBoard();optimize();
 </script></body></html>
