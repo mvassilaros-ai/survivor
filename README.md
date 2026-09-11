@@ -29,3 +29,23 @@ If you want shared synchronized state between you and your partner, add a small 
 
 ## Refresh Ownership
 The app now includes a **Refresh Ownership** button. It calls `/api/ownership`, which pulls SurvivorGrid and imports the **Projected** ownership percentage for the selected week. No extra API key is required. Manual ownership edits remain available.
+
+
+## V6: full slate + automatic future value
+- `api/future.js` loads the complete 2026 regular-season schedule from nflverse.
+- It uses nfelo market-implied neutral-field strength as the baseline for games without posted odds.
+- Posted SportsGameOdds fair moneylines overwrite MODEL probabilities wherever available.
+- Future Value is calculated automatically from each team's remaining high-probability spots and weekly scarcity.
+- The shortlist is now an output: every scheduled team is considered by the optimizer.
+
+
+## V7 one-click weekly workflow
+Use **Refresh Everything + Optimize**. It runs, in order:
+1. Refresh Full Season Model
+2. Refresh Live Odds
+3. Refresh Ownership for the selected week
+4. Recalculate Future Value
+5. Run the two-entry optimizer once
+
+The summary shows total team-game rows, LIVE vs MODEL rows, ownership updates, and the recommended next pair.
+Monte Carlo remains manual.
