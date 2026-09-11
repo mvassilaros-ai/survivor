@@ -12,7 +12,7 @@ select,input[type=number],input[type=text],textarea{width:100%;background:#0d152
 table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:8px 7px;border-bottom:1px solid var(--border);white-space:nowrap;text-align:left}th{font-size:11px;color:#b7c3d9}.scroll{overflow:auto}.sep{height:1px;background:var(--border);margin:13px 0}.tabs{display:flex;gap:5px;flex-wrap:wrap}.tab.active{background:#1769aa}.callout{border-left:4px solid var(--accent);padding-left:10px}
 @media(max-width:950px){.g4,.g3,.g2{grid-template-columns:1fr 1fr}}@media(max-width:620px){.g4,.g3,.g2{grid-template-columns:1fr}}
 </style></head><body><div class="wrap">
-<div class="title"><div><h1>NFL Survivor Planner</h1><div class="sub">18-week planning + free-market odds adapter + ownership + two-entry portfolio + Monte Carlo</div></div><div class="pill" id="liveStatus">Market data: manual</div></div>
+<div class="title"><div><h1>NFL Survivor Planner</h1><div class="sub">18-week planning + market odds + ownership + two-entry portfolio + manual Monte Carlo · Fast optimizer</div></div><div class="pill" id="liveStatus">Market data: manual</div></div>
 
 <div class="grid g4" style="margin-top:16px">
 <div class="card"><div class="k">Pool size</div><div class="v"><input id="pool" type="number" value="152"></div></div>
@@ -86,9 +86,24 @@ function tscore(r){let w=W(),p=r.p/100,o=r.own/100,use=1-r.future/100;return 100
 function pair(a,b){let pa=a.p/100,pb=b.p/100,same=a.team===b.team,w=W(),one=same?pa:1-(1-pa)*(1-pb),both=same?pa:pa*pb,bonus=same?0:w.d*100*Math.min(pa,pb),gap=Math.max(0,Math.abs(pa-pb)-.10)*20;return{a,b,one,both,same,score:(tscore(a)+tscore(b))/2+bonus-gap}}
 function forcePair(){let v=$("force").value;if(!v)return[null,null];let a=v.split("+").map(x=>x.trim());return[a[0],a[1]]}
 function bestPath(start,u,forced=null){
- const memo=new Map(); function rec(w,s){if(w>18)return{sc:0,path:[]};let key=w+"|"+[...s].sort().join(",");if(memo.has(key))return memo.get(key);
- let opts=wr(w).filter(r=>!s.has(r.team));if(w===start&&forced)opts=opts.filter(r=>r.team===forced);if(!opts.length)return{sc:-1e9,path:[]};
- let best=null;for(const r of opts){let n=new Set(s);n.add(r.team);let q=rec(w+1,n),c={sc:Math.log(Math.max(.01,r.p/100))*72+tscore(r)+q.sc,path:[r,...q.path]};if(!best||c.sc>best.sc)best=c}memo.set(key,best);return best}return rec(start,new Set(u))
+  const BEAM=120;
+  let states=[{sc:0,path:[],used:new Set(u)}];
+  for(let w=start;w<=18;w++){
+    let next=[];
+    for(const st of states){
+      let opts=wr(w).filter(r=>!st.used.has(r.team));
+      if(w===start && forced) opts=opts.filter(r=>r.team===forced);
+      for(const r of opts){
+        const nu=new Set(st.used); nu.add(r.team);
+        const local=Math.log(Math.max(.01,r.p/100))*72+tscore(r);
+        next.push({sc:st.sc+local,path:[...st.path,r],used:nu});
+      }
+    }
+    if(!next.length) return {sc:-1e9,path:[]};
+    next.sort((a,b)=>b.sc-a.sc);
+    states=next.slice(0,BEAM);
+  }
+  return states[0]||{sc:-1e9,path:[]};
 }
 function optimize(){
  let start=+$("currentWeek").value,fp=forcePair(),A=bestPath(start,used("usedA"),fp[0]),B=bestPath(start,used("usedB"),fp[1]);
@@ -119,6 +134,6 @@ async function refreshOdds(){
  localStorage.setItem("survivor_final_rows",JSON.stringify(rows));$("oddsMsg").textContent=`Updated ${n} team probabilities.`;$("liveStatus").textContent="Market data: live backend";renderBoard();optimize()}catch(e){$("oddsMsg").textContent="Live odds unavailable; manual values remain.";console.error(e)}
 }
 for(let w=1;w<=18;w++)$("currentWeek").add(new Option("Week "+w,w));
-$("risk").oninput=()=>{updateWeights();renderBoard();optimize()};$("opt").onclick=optimize;$("force").onchange=optimize;$("currentWeek").onchange=()=>{activeWeek=+$("currentWeek").value;renderTabs();renderBoard();optimize()};$("usedA").onchange=optimize;$("usedB").onchange=optimize;$("pit").onclick=()=>{$("force").value="LAC + PIT";optimize()};$("reset").onclick=()=>{rows=structuredClone(SEED);localStorage.removeItem("survivor_final_rows");renderBoard();optimize()};$("mc").onclick=runMC;$("refreshOdds").onclick=refreshOdds;
+$("risk").oninput=()=>{updateWeights()};$("risk").onchange=()=>{renderBoard();optimize()};$("opt").onclick=optimize;$("force").onchange=optimize;$("currentWeek").onchange=()=>{activeWeek=+$("currentWeek").value;renderTabs();renderBoard();optimize()};$("usedA").onchange=optimize;$("usedB").onchange=optimize;$("pit").onclick=()=>{$("force").value="LAC + PIT";optimize()};$("reset").onclick=()=>{rows=structuredClone(SEED);localStorage.removeItem("survivor_final_rows");renderBoard();optimize()};$("mc").onclick=runMC;$("refreshOdds").onclick=refreshOdds;
 updateWeights();renderTabs();renderBoard();optimize();
 </script></body></html>
