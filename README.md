@@ -111,3 +111,11 @@ For DraftKings, FanDuel, BetMGM, Caesars, ESPN BET and Bet365:
 6. Reject invalid markets.
 
 SportsGameOdds `fairOdds` is now only a fallback if fewer than two major-book pairs are available.
+
+
+## V14 compact market display
+The Survivor weekly board now separates:
+- **Win %** = no-vig fair probability used by the optimizer
+- **Raw market** = compact median major-book moneyline pair, e.g. `CLE +341 / JAX -442`
+
+Long book-by-book detail is no longer shown in the main table. It remains available as a hover tooltip on the Raw market cell. Win %, Open %, and Move are placed before market detail so the key numeric fields remain readable.

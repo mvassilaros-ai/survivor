@@ -9,7 +9,7 @@ h1{margin:0;font-size:30px}.sub,.tiny{color:var(--muted);font-size:12px;line-hei
 .row{display:flex;align-items:center;gap:10px}.spread{justify-content:space-between}.pill{font-size:12px;padding:5px 9px;border-radius:999px;background:#1c2a48}.good{color:var(--good)}.warn{color:var(--warn)}.bad{color:var(--bad)}
 button,select,input,textarea{font:inherit}button{background:#1b2947;color:var(--text);border:1px solid var(--border);border-radius:8px;padding:8px 11px;cursor:pointer}button:hover{background:#24375f}.primary{background:#1769aa}
 select,input[type=number],input[type=text],textarea{width:100%;background:#0d1528;color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px}input[type=range]{width:100%;accent-color:var(--accent)}
-table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:8px 7px;border-bottom:1px solid var(--border);white-space:nowrap;text-align:left}th{font-size:11px;color:#b7c3d9}.scroll{overflow:auto}.sep{height:1px;background:var(--border);margin:13px 0}.tabs{display:flex;gap:5px;flex-wrap:wrap}.tab.active{background:#1769aa}.callout{border-left:4px solid var(--accent);padding-left:10px}.successBanner{display:none;margin-top:12px;padding:12px 14px;border:1px solid var(--good);border-radius:10px;background:rgba(101,214,166,.08);color:var(--text)}
+table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:8px 7px;border-bottom:1px solid var(--border);white-space:nowrap;text-align:left}th{font-size:11px;color:#b7c3d9}.scroll{overflow:auto}.rawMarket{max-width:170px;white-space:normal;line-height:1.25}.numcol{min-width:78px}.sep{height:1px;background:var(--border);margin:13px 0}.tabs{display:flex;gap:5px;flex-wrap:wrap}.tab.active{background:#1769aa}.callout{border-left:4px solid var(--accent);padding-left:10px}.successBanner{display:none;margin-top:12px;padding:12px 14px;border:1px solid var(--good);border-radius:10px;background:rgba(101,214,166,.08);color:var(--text)}
 @media(max-width:950px){.g4,.g3,.g2{grid-template-columns:1fr 1fr}}@media(max-width:620px){.g4,.g3,.g2{grid-template-columns:1fr}}
 </style></head><body><div class="wrap">
 <div class="title"><div><h1>NFL Survivor Planner</h1><div class="sub">Verified market ingestion + full-slate assignment optimization · Manual Entry A / season-optimized Entry B</div></div><div class="row"><div class="pill" id="liveStatus">Odds: manual</div><div class="pill" id="modelStatus">Future model: seed</div><div class="pill" id="ownStatus">Ownership: manual</div></div></div>
@@ -74,7 +74,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:8px 7px;b
 
 <div class="card" style="margin-top:14px">
 <div class="row spread"><div><div class="big">Weekly board</div><div class="tiny">The board includes the entire scheduled slate. MODEL probabilities are replaced by LIVE market probabilities wherever posted.</div></div><div id="tabs" class="tabs"></div></div>
-<div class="scroll" style="margin-top:10px"><table><thead><tr><th>Team</th><th>Opp</th><th>Win %</th><th>Source</th><th>Market detail</th><th>Open %</th><th>Move</th><th>Public Ownership %</th><th>Future</th><th>Use score</th></tr></thead><tbody id="board"></tbody></table></div>
+<div class="scroll" style="margin-top:10px"><table><thead><tr><th>Team</th><th>Opp</th><th>Win %</th><th>Open %</th><th>Move</th><th>Source</th><th>Raw market</th><th>Public Ownership %</th><th>Future</th><th>Use score</th></tr></thead><tbody id="board"></tbody></table></div>
 </div>
 
 <div class="grid g2" style="margin-top:14px">
@@ -246,11 +246,11 @@ function renderBoard(){
    let i=rows.indexOf(r),mv=r.p-r.openp,src=r.source||"MODEL";
    tb.insertAdjacentHTML("beforeend",`<tr>
    <td>${r.team}</td><td>${r.opp}</td>
-   <td><input type="number" step=".1" data-i="${i}" data-k="p" value="${r.p}"></td>
-   <td><span class="pill">${src}</span></td>
-   <td class="tiny">${r.marketDetail||"—"}</td>
-   <td><input type="number" step=".1" data-i="${i}" data-k="openp" value="${r.openp}"></td>
+   <td class="numcol"><input type="number" step=".1" data-i="${i}" data-k="p" value="${r.p}"></td>
+   <td class="numcol"><input type="number" step=".1" data-i="${i}" data-k="openp" value="${r.openp}"></td>
    <td class="${mv>=0?'good':'warn'}">${mv>=0?'+':''}${mv.toFixed(1)}</td>
+   <td><span class="pill">${src}</span></td>
+   <td class="tiny rawMarket" title="${r.bookDetail||r.marketDetail||""}">${r.rawMarket||"—"}</td>
    <td><input type="number" step=".1" data-i="${i}" data-k="own" value="${r.own}"></td>
    <td>${r.future}</td><td>${tscore(r).toFixed(1)}</td></tr>`)
  });
@@ -261,8 +261,6 @@ function renderBoard(){
    renderBoard();optimize()
  })
 }
-
-
 function renderPairs(){
   const arr=window.__entryBCandidates||[];
   if(!arr.length){$("pairs").innerHTML="";return;}
@@ -382,7 +380,14 @@ async function refreshOdds(){
      if(Number.isFinite(p)){
        row.p=+(p*100).toFixed(1);
        row.source="LIVE";
-       row.marketDetail = `${g.away} ${g.awayFairOdds||""} / ${g.home} ${g.homeFairOdds||""} · ${g.method||""}${g.bookDetail?` · ${g.bookDetail}`:""}`;
+       const fmtOdd=v=>{
+         if(v===null||v===undefined||v==="") return "";
+         const n=Number(v);
+         return Number.isFinite(n)?(n>0?`+${n}`:`${n}`):String(v);
+       };
+       row.rawMarket = `${g.away} ${fmtOdd(g.medianAwayRaw)} / ${g.home} ${fmtOdd(g.medianHomeRaw)}`;
+       row.bookDetail = g.bookDetail||"";
+       row.marketDetail = `${row.rawMarket} · fair ${((g.awayProb||0)*100).toFixed(1)}% / ${((g.homeProb||0)*100).toFixed(1)}%`;
        n++;
      }
    }
