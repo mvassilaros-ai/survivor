@@ -13,29 +13,50 @@ function americanToProb(v){
   if(!Number.isFinite(o)||o===0)return null;
   return o<0 ? (-o)/((-o)+100) : 100/(o+100);
 }
-function median(a){
-  const x=a.filter(Number.isFinite).sort((a,b)=>a-b);
-  if(!x.length)return null;
-  const m=Math.floor(x.length/2);
-  return x.length%2?x[m]:(x[m-1]+x[m])/2;
+function median(arr){
+  const a=arr.filter(Number.isFinite).sort((x,y)=>x-y);
+  if(!a.length)return null;
+  const m=Math.floor(a.length/2);
+  return a.length%2?a[m]:(a[m-1]+a[m])/2;
 }
-function bookProbPair(homeOdd,awayOdd){
-  const major=["draftkings","fanduel","betmgm","caesars","espnbet","bet365"];
-  const hp=[],ap=[];
-  const hb=homeOdd?.byBookmaker||{}, ab=awayOdd?.byBookmaker||{};
-  for(const b of major){
-    const hv=hb[b]?.odds, av=ab[b]?.odds;
-    const h=americanToProb(hv), a=americanToProb(av);
-    if(h==null||a==null)continue;
-    const s=h+a;
-    if(s<0.95||s>1.20)continue;
-    hp.push(h/s); ap.push(a/s);
+
+const MAJOR=["draftkings","fanduel","betmgm","caesars","espnbet","bet365"];
+
+function pairedBookProbabilities(homeOdd,awayOdd){
+  const hb=homeOdd?.byBookmaker||{};
+  const ab=awayOdd?.byBookmaker||{};
+  const rows=[];
+
+  for(const book of MAJOR){
+    const hRec=hb[book], aRec=ab[book];
+    if(!hRec||!aRec||hRec.available===false||aRec.available===false) continue;
+
+    const hRaw=americanToProb(hRec.odds);
+    const aRaw=americanToProb(aRec.odds);
+    if(hRaw==null||aRaw==null) continue;
+
+    const sum=hRaw+aRaw;
+    // Normal two-way moneyline vig sanity range.
+    if(sum<0.98||sum>1.20) continue;
+
+    rows.push({
+      book,
+      homeProb:hRaw/sum,
+      awayProb:aRaw/sum,
+      homeOdds:hRec.odds,
+      awayOdds:aRec.odds
+    });
   }
-  return {home:median(hp),away:median(ap),books:hp.length};
+
+  return rows;
 }
+
 export default async function handler(req,res){
   const apiKey=process.env.SPORTSGAMEODDS_API_KEY;
-  if(!apiKey)return res.status(503).json({error:"SPORTSGAMEODDS_API_KEY is not configured."});
+  if(!apiKey){
+    return res.status(503).json({error:"SPORTSGAMEODDS_API_KEY is not configured."});
+  }
+
   try{
     const url=new URL("https://api.sportsgameodds.com/v2/events");
     url.searchParams.set("leagueID","NFL");
@@ -47,68 +68,90 @@ export default async function handler(req,res){
 
     const r=await fetch(url,{headers:{"x-api-key":apiKey}});
     if(!r.ok){
-      const t=await r.text();
-      return res.status(r.status).send(t);
+      return res.status(r.status).send(await r.text());
     }
+
     const obj=await r.json();
     const events=obj.data||obj.events||[];
     const games=[];
 
     for(const ev of events){
-      const home=teamAbbr(ev.teams?.home), away=teamAbbr(ev.teams?.away);
-      if(!home||!away)continue;
+      const home=teamAbbr(ev.teams?.home);
+      const away=teamAbbr(ev.teams?.away);
+      if(!home||!away) continue;
 
       const ho=ev.odds?.["points-home-game-ml-home"];
       const ao=ev.odds?.["points-away-game-ml-away"];
+
       if(!ho||!ao){
         games.push({home,away,valid:false,warning:"missing exact home/away moneyline market"});
         continue;
       }
 
-      const hf=americanToProb(ho.fairOdds);
-      const af=americanToProb(ao.fairOdds);
-      let homeProb=null,awayProb=null,method="fairOdds";
-      let valid=true,warning="";
+      let homeProb=null,awayProb=null,method="",bookDetail="";
+      const paired=pairedBookProbabilities(ho,ao);
 
-      if(hf==null||af==null){
-        valid=false;warning="invalid fairOdds";
+      // PRIMARY: median no-vig probabilities from paired major books.
+      if(paired.length>=2){
+        homeProb=median(paired.map(x=>x.homeProb));
+        awayProb=median(paired.map(x=>x.awayProb));
+
+        // Renormalize tiny median mismatch.
+        const s=homeProb+awayProb;
+        homeProb/=s; awayProb/=s;
+
+        method=`median no-vig major books (${paired.length})`;
+        bookDetail=paired.slice(0,4).map(x =>
+          `${x.book}:${away} ${x.awayOdds}/${home} ${x.homeOdds}`
+        ).join(" | ");
       } else {
-        const sum=hf+af;
-        // fairOdds should already be vig-free and therefore close to 1.00.
-        if(sum<0.97||sum>1.03){
-          // Fallback to bookmaker-pair de-vigging instead of trusting a bad pair.
-          const bp=bookProbPair(ho,ao);
-          if(bp.books>=2){
-            homeProb=bp.home;awayProb=bp.away;method=`median no-vig (${bp.books} major books)`;
-          } else {
-            valid=false;warning=`fair probability sum ${sum.toFixed(4)} outside sanity band`;
+        // FALLBACK: SportsGameOdds fairOdds pair.
+        const hf=americanToProb(ho.fairOdds);
+        const af=americanToProb(ao.fairOdds);
+        if(hf!=null&&af!=null){
+          const s=hf+af;
+          if(s>=0.97&&s<=1.03){
+            homeProb=hf/s; awayProb=af/s;
+            method="fallback fairOdds";
           }
-        } else {
-          // Normalize tiny rounding residuals.
-          homeProb=hf/sum;awayProb=af/sum;
         }
       }
 
+      let valid=Number.isFinite(homeProb)&&Number.isFinite(awayProb);
+      let warning="";
+
       if(valid){
-        const check=(homeProb||0)+(awayProb||0);
-        if(Math.abs(check-1)>0.005){
-          valid=false;warning="normalized probabilities do not sum to 1";
+        const sum=homeProb+awayProb;
+        if(Math.abs(sum-1)>0.005){
+          valid=false;
+          warning=`probabilities do not sum to 1: ${sum}`;
         }
+        if(homeProb<=0||homeProb>=1||awayProb<=0||awayProb>=1){
+          valid=false;
+          warning="invalid probability range";
+        }
+      } else {
+        warning="no usable paired major-book or fairOdds market";
       }
 
       games.push({
         eventID:ev.eventID,
         startTime:ev.startTime,
-        home,away,valid,warning,method,
+        home,away,valid,warning,method,bookDetail,
+        homeProb:valid?homeProb:null,
+        awayProb:valid?awayProb:null,
         homeFairOdds:ho?.fairOdds||null,
-        awayFairOdds:ao?.fairOdds||null,
-        homeProb,awayProb
+        awayFairOdds:ao?.fairOdds||null
       });
     }
 
-    res.setHeader("Cache-Control","s-maxage=300, stale-while-revalidate=600");
-    res.status(200).json({games,updatedAt:new Date().toISOString()});
+    res.setHeader("Cache-Control","s-maxage=120, stale-while-revalidate=300");
+    return res.status(200).json({games,updatedAt:new Date().toISOString()});
+
   }catch(err){
-    res.status(500).json({error:"Failed to fetch/normalize SportsGameOdds",detail:String(err)});
+    return res.status(500).json({
+      error:"Failed to fetch/normalize Survivor moneylines",
+      detail:String(err)
+    });
   }
 }
