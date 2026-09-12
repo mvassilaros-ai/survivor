@@ -119,3 +119,11 @@ The Survivor weekly board now separates:
 - **Raw market** = compact median major-book moneyline pair, e.g. `CLE +341 / JAX -442`
 
 Long book-by-book detail is no longer shown in the main table. It remains available as a hover tooltip on the Raw market cell. Win %, Open %, and Move are placed before market detail so the key numeric fields remain readable.
+
+## V15 weekly actual pool ownership
+- Each NFL week has a separately saved surviving-entry count.
+- Enter actual ownership as team entry counts in the weekly board.
+- Actual ownership percentage is calculated automatically.
+- The optimizer uses actual ownership when entered; otherwise it falls back to projected ownership.
+- Refresh Everything updates projected ownership only and never overwrites actual pool counts.
+- Actual counts persist in browser localStorage by week.

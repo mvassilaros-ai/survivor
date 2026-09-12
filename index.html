@@ -29,7 +29,9 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:8px 7px;b
 <div class="grid g3" style="margin-top:14px">
 <div class="card">
 <div class="big">Pool state</div><div class="grid g2" style="margin-top:10px">
-<div><div class="tiny">Current week</div><select id="currentWeek"></select></div>
+<div><div class="tiny">Current week</div><select id="currentWeek"></select><div class="tiny" style="margin-top:8px">Surviving pool entries</div>
+<input id="survivors" type="number" min="1" value="152" style="max-width:110px">
+<div class="tiny" style="margin-top:5px">Enter actual team counts below when available. Optimizer uses actual ownership automatically; otherwise projected ownership.</div></div>
 <div><div class="tiny">Your Entry A pick</div><select id="manualA"></select></div>
 </div>
 <div class="tiny" style="margin-top:8px"><b>Workflow:</b> you and your partner choose Entry A. The model optimizes Entry B and the remaining two-entry season path around that choice.</div>
@@ -74,7 +76,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:8px 7px;b
 
 <div class="card" style="margin-top:14px">
 <div class="row spread"><div><div class="big">Weekly board</div><div class="tiny">The board includes the entire scheduled slate. MODEL probabilities are replaced by LIVE market probabilities wherever posted.</div></div><div id="tabs" class="tabs"></div></div>
-<div class="scroll" style="margin-top:10px"><table><thead><tr><th>Team</th><th>Opp</th><th>Win %</th><th>Open %</th><th>Move</th><th>Source</th><th>Raw market</th><th>Public Ownership %</th><th>Future</th><th>Use score</th></tr></thead><tbody id="board"></tbody></table></div>
+<div class="scroll" style="margin-top:10px"><table><thead><tr><th>Team</th><th>Opp</th><th>Win %</th><th>Open %</th><th>Move</th><th>Source</th><th>Raw market</th><th>Projected Own %</th><th>Actual Pool #</th><th>Actual Pool %</th><th>Future</th><th>Use score</th></tr></thead><tbody id="board"></tbody></table></div>
 </div>
 
 <div class="grid g2" style="margin-top:14px">
@@ -140,7 +142,19 @@ function recalcFutureValues(){
 }
 
 function used(id){return new Set($(id).value.split(",").map(x=>x.trim().toUpperCase()).filter(Boolean))}
-function tscore(r){let w=W(),p=r.p/100,o=r.own/100,use=1-r.future/100;return 100*(w.s*p+w.l*p*(1-o)+w.f*use)}
+function ownershipKey(w){return `survivor_actual_ownership_2026_w${w}`;}
+function survivorsKey(w){return `survivor_survivors_2026_w${w}`;}
+function actualOwnershipMap(w){
+  try{return JSON.parse(localStorage.getItem(ownershipKey(w))||"{}")}catch(e){return {}}
+}
+function effectiveOwn(r){
+  const m=actualOwnershipMap(r.week);
+  const count=m[r.team];
+  const total=Number(localStorage.getItem(survivorsKey(r.week))||0);
+  if(Number.isFinite(count)&&total>0) return 100*count/total;
+  return Number(r.own)||0;
+}
+function tscore(r){let w=W(),p=r.p/100,o=effectiveOwn(r)/100,use=1-r.future/100;return 100*(w.s*p+w.l*p*(1-o)+w.f*use)}
 function pair(a,b){let pa=a.p/100,pb=b.p/100,same=a.team===b.team,w=W(),one=same?pa:1-(1-pa)*(1-pb),both=same?pa:pa*pb,bonus=same?0:w.d*100*Math.min(pa,pb),gap=Math.max(0,Math.abs(pa-pb)-.10)*20;return{a,b,one,both,same,score:(tscore(a)+tscore(b))/2+bonus-gap}}
 function forcePair(){let v=$("force").value;if(!v)return[null,null];let a=v.split("+").map(x=>x.trim());return[a[0],a[1]]}
 
@@ -242,8 +256,13 @@ function renderPath(A,B,start){let tb=$("pathBody");tb.innerHTML="";for(let w=st
 function renderTabs(){let t=$("tabs");t.innerHTML="";for(let w=1;w<=18;w++){let b=document.createElement("button");b.textContent="W"+w;b.className="tab"+(w===activeWeek?" active":"");b.onclick=()=>{activeWeek=w;renderTabs();renderBoard()};t.appendChild(b)}}
 function renderBoard(){
  let tb=$("board");tb.innerHTML="";
+ const amap=actualOwnershipMap(activeWeek);
+ const total=Number(localStorage.getItem(survivorsKey(activeWeek))||$("survivors")?.value||152);
+ if($("survivors")) $("survivors").value=total;
  wr(activeWeek).sort((a,b)=>b.p-a.p).forEach(r=>{
    let i=rows.indexOf(r),mv=r.p-r.openp,src=r.source||"MODEL";
+   const count=amap[r.team];
+   const actualPct=(Number.isFinite(count)&&total>0)?100*count/total:null;
    tb.insertAdjacentHTML("beforeend",`<tr>
    <td>${r.team}</td><td>${r.opp}</td>
    <td class="numcol"><input type="number" step=".1" data-i="${i}" data-k="p" value="${r.p}"></td>
@@ -252,14 +271,22 @@ function renderBoard(){
    <td><span class="pill">${src}</span></td>
    <td class="tiny rawMarket" title="${r.bookDetail||r.marketDetail||""}">${r.rawMarket||"—"}</td>
    <td><input type="number" step=".1" data-i="${i}" data-k="own" value="${r.own}"></td>
+   <td><input type="number" min="0" step="1" class="actualOwnCount" data-team="${r.team}" value="${Number.isFinite(count)?count:""}" placeholder="—"></td>
+   <td><b>${actualPct===null?"—":actualPct.toFixed(1)+"%"}</b></td>
    <td>${r.future}</td><td>${tscore(r).toFixed(1)}</td></tr>`)
  });
- tb.querySelectorAll("input").forEach(x=>x.onchange=e=>{
+ tb.querySelectorAll('input[data-i]').forEach(x=>x.onchange=e=>{
    rows[+e.target.dataset.i][e.target.dataset.k]=Number(e.target.value);
-   recalcFutureValues();
-   localStorage.setItem("survivor_final_rows",JSON.stringify(rows));
+   recalcFutureValues();localStorage.setItem("survivor_final_rows",JSON.stringify(rows));
    renderBoard();optimize()
- })
+ });
+ tb.querySelectorAll(".actualOwnCount").forEach(x=>x.onchange=e=>{
+   const m=actualOwnershipMap(activeWeek);
+   if(e.target.value==="") delete m[e.target.dataset.team];
+   else m[e.target.dataset.team]=Number(e.target.value);
+   localStorage.setItem(ownershipKey(activeWeek),JSON.stringify(m));
+   renderBoard();optimize();
+ });
 }
 function renderPairs(){
   const arr=window.__entryBCandidates||[];
@@ -268,7 +295,7 @@ function renderPairs(){
   $("pairs").innerHTML=arr.slice(0,16).map((x,i)=>{
     const m=x.m;
     const safety=((m.one*.55)+(m.both*.45))*100;
-    const leverage=((1-m.b.own/100)*m.b.p/100)*100;
+    const leverage=((1-effectiveOwn(m.b)/100)*m.b.p/100)*100;
     const futureGain=(100-m.b.future);
     const regret=bestSeason-x.portfolioScore;
     return `<tr>
@@ -455,7 +482,7 @@ async function refreshEverything(){
         `<strong>✓ Refresh complete</strong> · ${now}<br>`+
         `${future?.ok?future.count:0} season team-game rows loaded · `+
         `${liveCount} LIVE market rows · ${modelCount} MODEL rows · `+
-        `${own?.ok?own.count:0} Week ${week} ownership values updated.<br>`+
+        `${own?.ok?own.count:0} Week ${week} projected ownership values updated. Model uses saved actual pool ownership where entered.<br>`+
         `<strong>Entry A: ${a} · Recommended Entry B: ${b}</strong><br>`+
         `Completed in ${elapsed}s.`;
     }
@@ -479,6 +506,15 @@ async function refreshEverything(){
 }
 
 for(let w=1;w<=18;w++)$("currentWeek").add(new Option("Week "+w,w));
-$("risk").oninput=()=>{updateWeights()};$("risk").onchange=()=>{renderBoard();optimize()};$("opt").onclick=optimize;$("currentWeek").onchange=()=>{activeWeek=+$("currentWeek").value;renderTabs();renderBoard();fillManualA();optimize()};$("usedA").onchange=optimize;$("usedB").onchange=optimize;$("reset").onclick=()=>{rows=structuredClone(SEED);localStorage.removeItem("survivor_final_rows");renderBoard();optimize()};$("manualA").onchange=optimize;$("mc").onclick=runMC;$("refreshAll").onclick=refreshEverything;$("refreshFuture").onclick=refreshFuture;$("refreshOdds").onclick=refreshOdds;$("refreshOwnership").onclick=refreshOwnership;
+if($("survivors")){
+  $("survivors").value=localStorage.getItem(survivorsKey(activeWeek))||152;
+  $("survivors").onchange=()=>{
+    const n=Math.max(1,Number($("survivors").value)||1);
+    localStorage.setItem(survivorsKey(activeWeek),n);
+    renderBoard();optimize();
+  };
+}
+
+$("risk").oninput=()=>{updateWeights()};$("risk").onchange=()=>{renderBoard();optimize()};$("opt").onclick=optimize;$("currentWeek").onchange=()=>{activeWeek=+$("currentWeek").value;if($("survivors"))$("survivors").value=localStorage.getItem(survivorsKey(activeWeek))||152;renderTabs();renderBoard();fillManualA();optimize()};$("usedA").onchange=optimize;$("usedB").onchange=optimize;$("reset").onclick=()=>{rows=structuredClone(SEED);localStorage.removeItem("survivor_final_rows");renderBoard();optimize()};$("manualA").onchange=optimize;$("mc").onclick=runMC;$("refreshAll").onclick=refreshEverything;$("refreshFuture").onclick=refreshFuture;$("refreshOdds").onclick=refreshOdds;$("refreshOwnership").onclick=refreshOwnership;
 recalcFutureValues();updateWeights();renderTabs();renderBoard();fillManualA();optimize();
 </script></body></html>
