@@ -9,7 +9,7 @@ h1{margin:0;font-size:30px}.sub,.tiny{color:var(--muted);font-size:12px;line-hei
 .row{display:flex;align-items:center;gap:10px}.spread{justify-content:space-between}.pill{font-size:12px;padding:5px 9px;border-radius:999px;background:#1c2a48}.good{color:var(--good)}.warn{color:var(--warn)}.bad{color:var(--bad)}
 button,select,input,textarea{font:inherit}button{background:#1b2947;color:var(--text);border:1px solid var(--border);border-radius:8px;padding:8px 11px;cursor:pointer}button:hover{background:#24375f}.primary{background:#1769aa}
 select,input[type=number],input[type=text],textarea{width:100%;background:#0d1528;color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px}input[type=range]{width:100%;accent-color:var(--accent)}
-table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:8px 7px;border-bottom:1px solid var(--border);white-space:nowrap;text-align:left}th{font-size:11px;color:#b7c3d9}.scroll{overflow:auto}.sep{height:1px;background:var(--border);margin:13px 0}.tabs{display:flex;gap:5px;flex-wrap:wrap}.tab.active{background:#1769aa}.callout{border-left:4px solid var(--accent);padding-left:10px}
+table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:8px 7px;border-bottom:1px solid var(--border);white-space:nowrap;text-align:left}th{font-size:11px;color:#b7c3d9}.scroll{overflow:auto}.sep{height:1px;background:var(--border);margin:13px 0}.tabs{display:flex;gap:5px;flex-wrap:wrap}.tab.active{background:#1769aa}.callout{border-left:4px solid var(--accent);padding-left:10px}.successBanner{display:none;margin-top:12px;padding:12px 14px;border:1px solid var(--good);border-radius:10px;background:rgba(101,214,166,.08);color:var(--text)}
 @media(max-width:950px){.g4,.g3,.g2{grid-template-columns:1fr 1fr}}@media(max-width:620px){.g4,.g3,.g2{grid-template-columns:1fr}}
 </style></head><body><div class="wrap">
 <div class="title"><div><h1>NFL Survivor Planner</h1><div class="sub">Verified market ingestion + full-slate assignment optimization · Manual Entry A / season-optimized Entry B</div></div><div class="row"><div class="pill" id="liveStatus">Odds: manual</div><div class="pill" id="modelStatus">Future model: seed</div><div class="pill" id="ownStatus">Ownership: manual</div></div></div>
@@ -56,6 +56,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:8px 7px;b
 <button id="refreshOwnership">Refresh Ownership</button>
 </div>
 <div id="allMsg" class="tiny" style="margin-top:8px"></div>
+<div id="refreshBanner" class="successBanner"></div>
 <div id="futureMsg" class="tiny" style="margin-top:8px"></div>
 <div id="allSummary" class="tiny callout" style="margin-top:10px;display:none"></div>
 
@@ -326,7 +327,9 @@ async function refreshOwnership(){
     const pretty=stamp.toLocaleString([], {month:"short",day:"numeric",hour:"numeric",minute:"2-digit"});
     $("ownMsg").textContent=`Updated ${n} teams from SurvivorGrid projected ownership · ${pretty}`;
     $("ownStatus").textContent=`Ownership: ${pretty}`;
-    renderBoard();optimize();
+    renderBoard();
+    if(!suspendOptimize) optimize();
+    return {ok:true,count:n,updatedAt:pretty};
   }catch(e){
     $("ownMsg").textContent="Ownership refresh unavailable; manual values remain.";
     console.error(e);
@@ -379,7 +382,7 @@ async function refreshOdds(){
      if(Number.isFinite(p)){
        row.p=+(p*100).toFixed(1);
        row.source="LIVE";
-       row.marketDetail = `${g.away} ${g.awayFairOdds} / ${g.home} ${g.homeFairOdds}`;
+       row.marketDetail = `${g.away} ${g.awayFairOdds||""} / ${g.home} ${g.homeFairOdds||""} · ${g.method||""}${g.bookDetail?` · ${g.bookDetail}`:""}`;
        n++;
      }
    }
@@ -398,6 +401,78 @@ async function refreshOdds(){
    return {ok:false,error:String(e)};
  }
 }
+
+async function refreshEverything(){
+  const btn=$("refreshAll");
+  const allMsg=$("allMsg");
+  const banner=$("refreshBanner");
+  const t0=performance.now();
+
+  btn.disabled=true;
+  suspendOptimize=true;
+  if(banner){
+    banner.style.display="none";
+    banner.style.borderColor="var(--good)";
+    banner.innerHTML="";
+  }
+
+  try{
+    allMsg.textContent="1/4 Refreshing full-season model…";
+    const future=await refreshFuture();
+
+    allMsg.textContent="2/4 Applying verified live odds…";
+    const odds=await refreshOdds();
+
+    allMsg.textContent="3/4 Refreshing ownership…";
+    const own=await refreshOwnership();
+
+    allMsg.textContent="4/4 Recalculating future value and optimizing…";
+    recalcFutureValues();
+    localStorage.setItem("survivor_final_rows",JSON.stringify(rows));
+
+    suspendOptimize=false;
+    fillManualA();
+    optimize();
+
+    const elapsed=((performance.now()-t0)/1000).toFixed(1);
+    const liveCount=rows.filter(r=>r.source==="LIVE").length;
+    const modelCount=rows.filter(r=>r.source!=="LIVE").length;
+    const week=+$("currentWeek").value;
+    const a=lastA[0]?.team||"—";
+    const b=lastB[0]?.team||"—";
+    const now=new Date().toLocaleString([],{
+      month:"short",day:"numeric",hour:"numeric",minute:"2-digit"
+    });
+
+    if(banner){
+      banner.style.display="block";
+      banner.innerHTML=
+        `<strong>✓ Refresh complete</strong> · ${now}<br>`+
+        `${future?.ok?future.count:0} season team-game rows loaded · `+
+        `${liveCount} LIVE market rows · ${modelCount} MODEL rows · `+
+        `${own?.ok?own.count:0} Week ${week} ownership values updated.<br>`+
+        `<strong>Entry A: ${a} · Recommended Entry B: ${b}</strong><br>`+
+        `Completed in ${elapsed}s.`;
+    }
+    allMsg.textContent="Everything is current and optimized.";
+    return {ok:true};
+  }catch(e){
+    suspendOptimize=false;
+    if(banner){
+      banner.style.display="block";
+      banner.style.borderColor="var(--warn)";
+      banner.innerHTML=
+        `<strong style="color:var(--warn)">Refresh incomplete</strong><br>`+
+        `${String(e)}`;
+    }
+    allMsg.textContent="One or more refresh steps failed; saved data remains.";
+    console.error(e);
+    return {ok:false,error:String(e)};
+  }finally{
+    btn.disabled=false;
+  }
+}
+
 for(let w=1;w<=18;w++)$("currentWeek").add(new Option("Week "+w,w));
 $("risk").oninput=()=>{updateWeights()};$("risk").onchange=()=>{renderBoard();optimize()};$("opt").onclick=optimize;$("currentWeek").onchange=()=>{activeWeek=+$("currentWeek").value;renderTabs();renderBoard();fillManualA();optimize()};$("usedA").onchange=optimize;$("usedB").onchange=optimize;$("reset").onclick=()=>{rows=structuredClone(SEED);localStorage.removeItem("survivor_final_rows");renderBoard();optimize()};$("manualA").onchange=optimize;$("mc").onclick=runMC;$("refreshAll").onclick=refreshEverything;$("refreshFuture").onclick=refreshFuture;$("refreshOdds").onclick=refreshOdds;$("refreshOwnership").onclick=refreshOwnership;
 recalcFutureValues();updateWeights();renderTabs();renderBoard();fillManualA();optimize();

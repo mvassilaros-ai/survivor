@@ -82,3 +82,32 @@ It explicitly maps the home and away teams, converts both fairOdds to probabilit
 If SportsGameOdds fairOdds fails validation, the backend attempts a fallback using paired moneylines from major books (DraftKings, FanDuel, BetMGM, Caesars, ESPN BET, Bet365), de-vigs each pair, then uses the median probability.
 
 The frontend displays Market Detail so the team/price mapping is auditable.
+
+
+## V12 one-click refresh confirmation
+The missing `refreshEverything()` orchestration function has been restored.
+
+`Refresh Everything + Optimize` now visibly reports:
+- completion timestamp
+- season team-game rows loaded
+- LIVE vs MODEL rows
+- ownership values updated
+- selected Entry A
+- recommended Entry B
+- elapsed time
+
+If a step fails, the app shows a visible `Refresh incomplete` banner instead.
+
+
+## V13 major-book moneyline consensus
+Survivor now uses paired major-book moneylines as the primary market source.
+
+For DraftKings, FanDuel, BetMGM, Caesars, ESPN BET and Bet365:
+1. Read the home and away moneylines from the same book.
+2. Convert both to raw implied probabilities.
+3. Remove the vig within that book.
+4. Take the median no-vig home and away probability across books.
+5. Re-normalize tiny median rounding differences.
+6. Reject invalid markets.
+
+SportsGameOdds `fairOdds` is now only a fallback if fewer than two major-book pairs are available.
