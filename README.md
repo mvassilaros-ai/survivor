@@ -71,3 +71,14 @@ The two entries are now optimized jointly across every remaining week.
 
 ## V10 assignment optimizer
 Beam search replaced with a bipartite assignment solver. Entry A is fixed manually for the current week. Every legal Entry B candidate is forced into the current week and its remaining Weeks 2–18 schedule is solved exactly under the model's weekly values and used-team constraint. The table shows the full-season score and Cost vs best for each candidate.
+
+## V11 verified market ingestion
+The Survivor odds route now uses the exact SportsGameOdds moneyline markets:
+- `points-home-game-ml-home`
+- `points-away-game-ml-away`
+
+It explicitly maps the home and away teams, converts both fairOdds to probabilities, verifies they sum to ~100%, and rejects invalid pairs.
+
+If SportsGameOdds fairOdds fails validation, the backend attempts a fallback using paired moneylines from major books (DraftKings, FanDuel, BetMGM, Caesars, ESPN BET, Bet365), de-vigs each pair, then uses the median probability.
+
+The frontend displays Market Detail so the team/price mapping is auditable.
