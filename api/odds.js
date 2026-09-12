@@ -21,6 +21,13 @@ function median(arr){
 }
 
 const MAJOR=["draftkings","fanduel","betmgm","caesars","espnbet","bet365"];
+function medianRawOdds(vals){
+  const nums=vals.map(v=>Number(String(v).replace("+",""))).filter(Number.isFinite).sort((a,b)=>a-b);
+  if(!nums.length)return null;
+  const m=Math.floor(nums.length/2);
+  return nums.length%2?nums[m]:Math.round((nums[m-1]+nums[m])/2);
+}
+
 
 function pairedBookProbabilities(homeOdd,awayOdd){
   const hb=homeOdd?.byBookmaker||{};
@@ -90,6 +97,9 @@ export default async function handler(req,res){
 
       let homeProb=null,awayProb=null,method="",bookDetail="";
       const paired=pairedBookProbabilities(ho,ao);
+      const medianHomeRaw=medianRawOdds(paired.map(x=>x.homeOdds));
+      const medianAwayRaw=medianRawOdds(paired.map(x=>x.awayOdds));
+
 
       // PRIMARY: median no-vig probabilities from paired major books.
       if(paired.length>=2){
@@ -140,6 +150,8 @@ export default async function handler(req,res){
         home,away,valid,warning,method,bookDetail,
         homeProb:valid?homeProb:null,
         awayProb:valid?awayProb:null,
+        medianHomeRaw,
+        medianAwayRaw,
         homeFairOdds:ho?.fairOdds||null,
         awayFairOdds:ao?.fairOdds||null
       });
