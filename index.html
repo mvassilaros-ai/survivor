@@ -12,7 +12,7 @@ select,input[type=number],input[type=text],textarea{width:100%;background:#0d152
 table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:8px 7px;border-bottom:1px solid var(--border);white-space:nowrap;text-align:left}th{font-size:11px;color:#b7c3d9}.scroll{overflow:auto}.sep{height:1px;background:var(--border);margin:13px 0}.tabs{display:flex;gap:5px;flex-wrap:wrap}.tab.active{background:#1769aa}.callout{border-left:4px solid var(--accent);padding-left:10px}
 @media(max-width:950px){.g4,.g3,.g2{grid-template-columns:1fr 1fr}}@media(max-width:620px){.g4,.g3,.g2{grid-template-columns:1fr}}
 </style></head><body><div class="wrap">
-<div class="title"><div><h1>NFL Survivor Planner</h1><div class="sub">One-click weekly refresh + full-slate planning + season-long two-entry portfolio optimization · Fast optimizer</div></div><div class="row"><div class="pill" id="liveStatus">Odds: manual</div><div class="pill" id="modelStatus">Future model: seed</div><div class="pill" id="ownStatus">Ownership: manual</div></div></div>
+<div class="title"><div><h1>NFL Survivor Planner</h1><div class="sub">One-click weekly refresh + full-slate assignment optimization · Manual Entry A / season-optimized Entry B</div></div><div class="row"><div class="pill" id="liveStatus">Odds: manual</div><div class="pill" id="modelStatus">Future model: seed</div><div class="pill" id="ownStatus">Ownership: manual</div></div></div>
 
 <div class="grid g4" style="margin-top:16px">
 <div class="card"><div class="k">Pool size</div><div class="v"><input id="pool" type="number" value="152"></div></div>
@@ -77,7 +77,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:8px 7px;b
 </div>
 
 <div class="grid g2" style="margin-top:14px">
-<div class="card"><div class="big">Entry A fixed — optimize Entry B</div><div class="tiny">Sorted by full-season portfolio score. This-week score is shown separately so the recommendation is auditable.</div><div class="scroll"><table><thead><tr><th>#</th><th>Pair</th><th>≥1 survives</th><th>Both</th><th>Safety</th><th>Leverage</th><th>Future gain</th><th>This-week score</th><th>18-week score</th><th>Recommended</th></tr></thead><tbody id="pairs"></tbody></table></div></div>
+<div class="card"><div class="big">Entry A fixed — optimize Entry B</div><div class="tiny">Every Entry B candidate is forced this week and the remaining season is solved as an assignment problem. “Cost vs best” is the modeled full-season opportunity cost.</div><div class="scroll"><table><thead><tr><th>#</th><th>Pair</th><th>≥1 survives</th><th>Both</th><th>Safety</th><th>Leverage</th><th>Future gain</th><th>This-week score</th><th>18-week score</th><th>Cost vs best</th><th>Recommended</th></tr></thead><tbody id="pairs"></tbody></table></div></div>
 <div class="card"><div class="big">Decision read</div><div id="why" class="callout tiny" style="margin-top:10px">—</div><div class="sep"></div><div id="weights" class="tiny"></div></div>
 </div>
 
@@ -144,86 +144,97 @@ function pair(a,b){let pa=a.p/100,pb=b.p/100,same=a.team===b.team,w=W(),one=same
 function forcePair(){let v=$("force").value;if(!v)return[null,null];let a=v.split("+").map(x=>x.trim());return[a[0],a[1]]}
 
 
-function jointBestPaths(start,usedASet,usedBSet,forcedA=null){
-  const BEAM=220;
-  let states=[{sc:0,pathA:[],pathB:[],usedA:new Set(usedASet),usedB:new Set(usedBSet)}];
 
-  for(let w=start;w<=18;w++){
-    let next=[];
-    const optsAAll=wr(w), optsBAll=wr(w);
-
-    for(const st of states){
-      let optsA=optsAAll.filter(r=>!st.usedA.has(r.team));
-      let optsB=optsBAll.filter(r=>!st.usedB.has(r.team));
-
-      // Human fixes Entry A only for the CURRENT WEEK.
-      if(w===start && forcedA) optsA=optsA.filter(r=>r.team===forcedA);
-
-      for(const a of optsA){
-        for(const b of optsB){
-          const ua=new Set(st.usedA);ua.add(a.team);
-          const ub=new Set(st.usedB);ub.add(b.team);
-
-          const pa=a.p/100,pb=b.p/100;
-          const baseA=Math.log(Math.max(.01,pa))*72+tscore(a);
-          const baseB=Math.log(Math.max(.01,pb))*72+tscore(b);
-
-          const same=a.team===b.team;
-          const diversifyBonus=same ? -8 : W().d*100*Math.min(pa,pb);
-          const safetyGapPenalty=Math.max(0,Math.abs(pa-pb)-.12)*18;
-          const correlationPenalty=same ? 10 : 0;
-
-          const local=baseA+baseB+diversifyBonus-correlationPenalty-safetyGapPenalty;
-
-          next.push({
-            sc:st.sc+local,
-            pathA:[...st.pathA,a],
-            pathB:[...st.pathB,b],
-            usedA:ua,usedB:ub
-          });
+function basePickValue(r){
+  const p=Math.max(.01,r.p/100);
+  return Math.log(p)*72 + tscore(r);
+}
+function solveAssignment(start,usedSet,fixedCurrentTeam=null,collisionPath=null){
+  const weeks=[]; for(let w=start;w<=18;w++) weeks.push(w);
+  const teamSet=new Set();
+  for(const w of weeks) for(const r of wr(w)) if(!usedSet.has(r.team)) teamSet.add(r.team);
+  const teams=[...teamSet];
+  const WN=weeks.length,TN=teams.length,S=0,weekBase=1,teamBase=1+WN,T=1+WN+TN,N=T+1;
+  const g=Array.from({length:N},()=>[]);
+  function addEdge(u,v,cap,cost,meta=null){
+    const a={to:v,rev:g[v].length,cap,cost,meta};
+    const b={to:u,rev:g[u].length,cap:0,cost:-cost,meta:null};
+    g[u].push(a);g[v].push(b);
+  }
+  for(let i=0;i<WN;i++) addEdge(S,weekBase+i,1,0);
+  for(let j=0;j<TN;j++) addEdge(teamBase+j,T,1,0);
+  for(let i=0;i<WN;i++){
+    const w=weeks[i];
+    for(let j=0;j<TN;j++){
+      const team=teams[j],r=wr(w).find(x=>x.team===team);
+      if(!r) continue;
+      if(w===start&&fixedCurrentTeam&&team!==fixedCurrentTeam) continue;
+      let val=basePickValue(r);
+      if(collisionPath&&collisionPath[i]&&collisionPath[i].team===team) val-=12;
+      addEdge(weekBase+i,teamBase+j,1,-val,{row:r});
+    }
+  }
+  let flow=0,cost=0;
+  while(flow<WN){
+    const dist=Array(N).fill(Infinity),pv=Array(N).fill(-1),pe=Array(N).fill(-1),inq=Array(N).fill(false);
+    dist[S]=0; const q=[S]; inq[S]=true;
+    while(q.length){
+      const u=q.shift();inq[u]=false;
+      for(let ei=0;ei<g[u].length;ei++){
+        const e=g[u][ei]; if(e.cap<=0) continue;
+        const nd=dist[u]+e.cost;
+        if(nd<dist[e.to]-1e-9){
+          dist[e.to]=nd;pv[e.to]=u;pe[e.to]=ei;
+          if(!inq[e.to]){inq[e.to]=true;q.push(e.to);}
         }
       }
     }
-
-    if(!next.length) return {sc:-1e9,pathA:[],pathB:[]};
-
-    next.sort((x,y)=>y.sc-x.sc);
-    const seen=new Set(),pruned=[];
-    for(const st of next){
-      const key=[...st.usedA].sort().join(",")+"|"+[...st.usedB].sort().join(",");
-      if(seen.has(key)) continue;
-      seen.add(key);pruned.push(st);
-      if(pruned.length>=BEAM) break;
+    if(!Number.isFinite(dist[T])) break;
+    let v=T;
+    while(v!==S){
+      const u=pv[v],ei=pe[v];
+      g[u][ei].cap-=1;g[v][g[u][ei].rev].cap+=1;v=u;
     }
-    states=pruned;
+    flow++;cost+=dist[T];
   }
-  return states[0]||{sc:-1e9,pathA:[],pathB:[]};
+  if(flow<WN) return null;
+  const path=[];
+  for(let i=0;i<WN;i++){
+    let chosen=null;
+    for(const e of g[weekBase+i]) if(e.meta&&e.cap===0){chosen=e.meta.row;break;}
+    path.push(chosen);
+  }
+  return {score:-cost,path};
 }
-
 function optimize(){
   const start=+$("currentWeek").value;
   fillManualA();
-  const forcedA=$("manualA")?.value||null;
-  const result=jointBestPaths(start,used("usedA"),used("usedB"),forcedA);
-
-  lastA=result.pathA;lastB=result.pathB;
+  const aTeam=$("manualA")?.value||null;
+  const usedASet=used("usedA"),usedBSet=used("usedB");
+  const A=solveAssignment(start,usedASet,aTeam,null);
+  if(!A){$("status").textContent="No valid Entry A season path";return;}
+  const candidates=[];
+  for(const b of wr(start).filter(r=>!usedBSet.has(r.team))){
+    const B=solveAssignment(start,usedBSet,b.team,A.path);
+    if(!B) continue;
+    const m=pair(A.path[0],b);
+    candidates.push({b,B,m,portfolioScore:A.score+B.score});
+  }
+  candidates.sort((x,y)=>y.portfolioScore-x.portfolioScore);
+  const best=candidates[0];
+  if(!best){$("status").textContent="No valid Entry B path";return;}
+  lastA=A.path;lastB=best.B.path;
+  window.__entryBCandidates=candidates;
+  window.__entryAScore=A.score;
   renderPath(lastA,lastB,start);
-
   if(lastA[0]) $("nextA").textContent=lastA[0].team;
   if(lastB[0]) $("nextB").textContent=lastB[0].team;
-
-  const a=lastA[0],b=lastB[0];
-  if(a&&b){
-    const m=pair(a,b);
-    $("one").textContent=pct(m.one);
-    $("both").textContent=pct(m.both);
-    $("survA").textContent=pct(lastA.reduce((z,r)=>z*r.p/100,1));
-    $("survB").textContent=pct(lastB.reduce((z,r)=>z*r.p/100,1));
-    $("why").innerHTML=
-      `You fixed <b>Entry A = ${a.team}</b>. The model recommends <b>Entry B = ${b.team}</b> after optimizing the entire remaining season around that choice.`;
-  }
-
-  $("status").textContent="Entry A fixed · Entry B optimized";
+  const a=lastA[0],b=lastB[0],m=pair(a,b);
+  $("one").textContent=pct(m.one);$("both").textContent=pct(m.both);
+  $("survA").textContent=pct(lastA.reduce((z,r)=>z*r.p/100,1));
+  $("survB").textContent=pct(lastB.reduce((z,r)=>z*r.p/100,1));
+  $("why").innerHTML=`You fixed <b>Entry A = ${a.team}</b>. Every legal Entry B team was tested against the <b>entire remaining schedule</b>; the assignment solver recommends <b>${b.team}</b>.`;
+  $("status").textContent="Entry A fixed · Entry B season-optimized";
   renderPairs();
 }
 function renderPath(A,B,start){let tb=$("pathBody");tb.innerHTML="";for(let w=start;w<=18;w++){let a=A[w-start],b=B[w-start];tb.insertAdjacentHTML("beforeend",`<tr><td><button class="wk" data-w="${w}">W${w}</button></td><td>${a?.team||"—"}</td><td>${a?a.p.toFixed(1)+"%":"—"}</td><td>${b?.team||"—"}</td><td>${b?b.p.toFixed(1)+"%":"—"}</td><td>${a&&b&&a.team===b.team?"YES":"No"}</td><td class="tiny">${a&&b&&a.team===b.team?"Correlated":"Diversified"}</td></tr>`)}tb.querySelectorAll(".wk").forEach(x=>x.onclick=()=>{activeWeek=+x.dataset.w;renderTabs();renderBoard()})}
@@ -249,80 +260,24 @@ function renderBoard(){
  })
 }
 
-function evaluateForcedPair(aTeam,bTeam){
-  const start=+$("currentWeek").value;
-  const uA=used("usedA"),uB=used("usedB");
-  const BEAM=180;
-  let states=[{sc:0,pathA:[],pathB:[],usedA:new Set(uA),usedB:new Set(uB)}];
-
-  for(let w=start;w<=18;w++){
-    let next=[];
-    for(const st of states){
-      let optsA=wr(w).filter(r=>!st.usedA.has(r.team));
-      let optsB=wr(w).filter(r=>!st.usedB.has(r.team));
-      if(w===start) optsA=optsA.filter(r=>r.team===aTeam);
-      if(w===start) optsB=optsB.filter(r=>r.team===bTeam);
-
-      for(const a of optsA)for(const b of optsB){
-        const ua=new Set(st.usedA);ua.add(a.team);
-        const ub=new Set(st.usedB);ub.add(b.team);
-        const pa=a.p/100,pb=b.p/100;
-        const same=a.team===b.team;
-        const local=
-          Math.log(Math.max(.01,pa))*72+tscore(a)+
-          Math.log(Math.max(.01,pb))*72+tscore(b)+
-          (same?-8:W().d*100*Math.min(pa,pb))-
-          (same?10:0)-
-          Math.max(0,Math.abs(pa-pb)-.12)*18;
-        next.push({sc:st.sc+local,pathA:[...st.pathA,a],pathB:[...st.pathB,b],usedA:ua,usedB:ub});
-      }
-    }
-    if(!next.length) return null;
-    next.sort((x,y)=>y.sc-x.sc);
-    const seen=new Set(),pr=[];
-    for(const st of next){
-      const key=[...st.usedA].sort().join(",")+"|"+[...st.usedB].sort().join(",");
-      if(seen.has(key))continue;seen.add(key);pr.push(st);
-      if(pr.length>=BEAM)break;
-    }
-    states=pr;
-  }
-  return states[0]||null;
-}
 
 function renderPairs(){
-  const cur=+$("currentWeek").value;
-  fillManualA();
-  const aTeam=$("manualA")?.value;
-  const a=wr(cur).find(r=>r.team===aTeam);
-  if(!a){$("pairs").innerHTML="";return;}
-
-  const arr=[];
-  for(const b of wr(cur).filter(r=>!used("usedB").has(r.team))){
-    const m=pair(a,b);
-    const season=evaluateForcedPair(a.team,b.team);
-    arr.push({m,seasonScore:season?.sc??-1e9});
-  }
-  arr.sort((x,y)=>y.seasonScore-x.seasonScore);
-
-  $("pairs").innerHTML=arr.slice(0,12).map((x,i)=>{
+  const arr=window.__entryBCandidates||[];
+  if(!arr.length){$("pairs").innerHTML="";return;}
+  const bestSeason=arr[0].portfolioScore;
+  $("pairs").innerHTML=arr.slice(0,16).map((x,i)=>{
     const m=x.m;
     const safety=((m.one*.55)+(m.both*.45))*100;
     const leverage=((1-m.b.own/100)*m.b.p/100)*100;
     const futureGain=(100-m.b.future);
-    const rec=(lastB[0]&&m.b.team===lastB[0].team)?"YES":"";
+    const regret=bestSeason-x.portfolioScore;
     return `<tr>
-      <td>${i+1}</td>
-      <td>${m.a.team} + ${m.b.team}</td>
-      <td>${pct(m.one)}</td>
-      <td>${pct(m.both)}</td>
-      <td>${safety.toFixed(1)}</td>
-      <td>${leverage.toFixed(1)}</td>
-      <td>${futureGain.toFixed(0)}</td>
-      <td>${m.score.toFixed(1)}</td>
-      <td>${x.seasonScore.toFixed(1)}</td>
-      <td><b>${rec}</b></td>
-    </tr>`;
+      <td>${i+1}</td><td>${m.a.team} + ${m.b.team}</td>
+      <td>${pct(m.one)}</td><td>${pct(m.both)}</td>
+      <td>${safety.toFixed(1)}</td><td>${leverage.toFixed(1)}</td>
+      <td>${futureGain.toFixed(0)}</td><td>${m.score.toFixed(1)}</td>
+      <td>${x.portfolioScore.toFixed(1)}</td><td>${regret.toFixed(1)}</td>
+      <td><b>${i===0?"YES":""}</b></td></tr>`;
   }).join("");
 }
 function updateWeights(){let v=+$("risk").value,w=W();$("riskV").textContent=v+" / 100";$("riskName").textContent=v<30?"Conservative":v<70?"Balanced":"Aggressive";$("weights").innerHTML=`Safety ${(w.s*100).toFixed(0)}% · ownership leverage ${(w.l*100).toFixed(0)}% · low future-cost ${(w.f*100).toFixed(0)}% · diversification bonus ${(w.d*100).toFixed(0)}%.`}

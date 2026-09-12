@@ -68,3 +68,6 @@ The two entries are now optimized jointly across every remaining week.
   - current-week score
   - full-season (18-week) portfolio score
 - The table is sorted by the full-season score and explicitly marks the recommended Entry B.
+
+## V10 assignment optimizer
+Beam search replaced with a bipartite assignment solver. Entry A is fixed manually for the current week. Every legal Entry B candidate is forced into the current week and its remaining Weeks 2–18 schedule is solved exactly under the model's weekly values and used-team constraint. The table shows the full-season score and Cost vs best for each candidate.
