@@ -76,10 +76,12 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:8px 7px;b
 
 <div class="card" style="margin-top:14px">
 <div class="row spread"><div><div class="big">Weekly board</div><div class="tiny">The board includes the entire scheduled slate. MODEL probabilities are replaced by LIVE market probabilities wherever posted.</div></div><div id="tabs" class="tabs"></div></div>
-<div class="scroll" style="margin-top:10px"><table><thead><tr><th>Team</th><th>Opp</th><th>Win %</th><th>Open %</th><th>Move</th><th>Source</th><th>Raw market</th><th>Projected Own %</th><th>Actual Pool #</th><th>Actual Pool %</th><th>Future</th><th>Use score</th></tr></thead><tbody id="board"></tbody></table></div>
+<div class="scroll" style="margin-top:10px"><table><thead><tr><th>Team</th><th>Opp</th><th>Win %</th><th>Open %</th><th>Move</th><th>Source</th><th>Raw market</th><th>Projected Own %</th><th>Actual Pool #</th><th>Actual Pool %</th><th>Ownership Used</th><th>Source</th><th>Avail. in Live Field</th><th>Future</th><th>Use score</th></tr></thead><tbody id="board"></tbody></table></div>
 </div>
 
 <div class="grid g2" style="margin-top:14px">
+<div class="card" style="margin-top:14px"><div class="row spread"><div><div class="big">Pool Pick History & Field Availability</div><div class="tiny">Enter each week's pool picks. They are stored by week and immediately recalculate the optimizer. Prior winning picks reduce that team's estimated availability among surviving opponents; losing picks are eliminated. Aggregate data cannot reconstruct exact entrant paths, so availability is an estimate.</div></div><div class="row"><select id="historyWeek" style="width:120px"></select><button id="loadHistoryWeek">Open Week</button></div></div><div class="grid g4" style="margin-top:10px"><div><div class="tiny">Week entrants</div><input id="historyEntrants" type="number" min="1" step="1"></div><div><div class="tiny">Picks entered</div><div class="v" id="historyPickTotal">0</div></div><div><div class="tiny">Winning picks</div><div class="v" id="historyWinningTotal">0</div></div><div><div class="tiny">Stored weeks</div><div class="v" id="historyStoredWeeks">0</div></div></div><div class="scroll" style="margin-top:10px"><table><thead><tr><th>Team</th><th>Pick #</th><th>Pick %</th><th>Result</th><th>Effect on surviving field</th></tr></thead><tbody id="historyBody"></tbody></table></div><div id="historyMsg" class="tiny" style="margin-top:8px">Changes save automatically.</div></div>
+
 <div class="card"><div class="big">Entry A fixed — optimize Entry B</div><div class="tiny">Every Entry B candidate is forced this week and the remaining season is solved as an assignment problem. “Cost vs best” is the modeled full-season opportunity cost.</div><div class="scroll"><table><thead><tr><th>#</th><th>Pair</th><th>≥1 survives</th><th>Both</th><th>Safety</th><th>Leverage</th><th>Future gain</th><th>This-week score</th><th>18-week score</th><th>Cost vs best</th><th>Recommended</th></tr></thead><tbody id="pairs"></tbody></table></div></div>
 <div class="card"><div class="big">Decision read</div><div id="why" class="callout tiny" style="margin-top:10px">—</div><div class="sep"></div><div id="weights" class="tiny"></div></div>
 </div>
@@ -144,17 +146,14 @@ function recalcFutureValues(){
 function used(id){return new Set($(id).value.split(",").map(x=>x.trim().toUpperCase()).filter(Boolean))}
 function ownershipKey(w){return `survivor_actual_ownership_2026_w${w}`;}
 function survivorsKey(w){return `survivor_survivors_2026_w${w}`;}
-function actualOwnershipMap(w){
-  try{return JSON.parse(localStorage.getItem(ownershipKey(w))||"{}")}catch(e){return {}}
-}
-function effectiveOwn(r){
-  const m=actualOwnershipMap(r.week);
-  const count=m[r.team];
-  const total=Number(localStorage.getItem(survivorsKey(r.week))||0);
-  if(Number.isFinite(count)&&total>0) return 100*count/total;
-  return Number(r.own)||0;
-}
-function tscore(r){let w=W(),p=r.p/100,o=effectiveOwn(r)/100,use=1-r.future/100;return 100*(w.s*p+w.l*p*(1-o)+w.f*use)}
+function resultKey(w){return `survivor_pick_results_2026_w${w}`;}
+function actualOwnershipMap(w){try{return JSON.parse(localStorage.getItem(ownershipKey(w))||"{}")}catch(e){return {}}}
+function resultMap(w){try{return JSON.parse(localStorage.getItem(resultKey(w))||"{}")}catch(e){return {}}}
+function effectiveOwn(r){const m=actualOwnershipMap(r.week),count=Number(m[r.team]),total=Number(localStorage.getItem(survivorsKey(r.week))||0);if(Number.isFinite(count)&&total>0)return 100*count/total;return Number(r.own)||0;}
+function ownershipSource(r){const m=actualOwnershipMap(r.week),count=Number(m[r.team]),total=Number(localStorage.getItem(survivorsKey(r.week))||0);return Number.isFinite(count)&&total>0?"ACTUAL":"PROJECTED";}
+function fieldAvailability(team,beforeWeek){let avail=1;for(let w=1;w<beforeWeek;w++){const total=Number(localStorage.getItem(survivorsKey(w))||0),picks=actualOwnershipMap(w),results=resultMap(w),c=Number(picks[team]);if(total>0&&Number.isFinite(c)&&String(results[team]||"").toUpperCase()==="W")avail*=Math.max(0,1-c/total);}return 100*avail;}
+function fieldScarcityMultiplier(r){const a=fieldAvailability(r.team,r.week)/100;return .75+.25*a;}
+function tscore(r){let w=W(),p=r.p/100,o=effectiveOwn(r)/100,use=1-r.future/100,avail=fieldAvailability(r.team,r.week)/100;const adjustedOwn=Math.min(1,o*Math.max(.25,avail));return 100*(w.s*p+w.l*p*(1-adjustedOwn)*fieldScarcityMultiplier(r)+w.f*use)}
 function pair(a,b){let pa=a.p/100,pb=b.p/100,same=a.team===b.team,w=W(),one=same?pa:1-(1-pa)*(1-pb),both=same?pa:pa*pb,bonus=same?0:w.d*100*Math.min(pa,pb),gap=Math.max(0,Math.abs(pa-pb)-.10)*20;return{a,b,one,both,same,score:(tscore(a)+tscore(b))/2+bonus-gap}}
 function forcePair(){let v=$("force").value;if(!v)return[null,null];let a=v.split("+").map(x=>x.trim());return[a[0],a[1]]}
 
@@ -272,7 +271,7 @@ function renderBoard(){
    <td class="tiny rawMarket" title="${r.bookDetail||r.marketDetail||""}">${r.rawMarket||"—"}</td>
    <td><input type="number" step=".1" data-i="${i}" data-k="own" value="${r.own}"></td>
    <td><input type="number" min="0" step="1" class="actualOwnCount" data-team="${r.team}" value="${Number.isFinite(count)?count:""}" placeholder="—"></td>
-   <td><b>${actualPct===null?"—":actualPct.toFixed(1)+"%"}</b></td>
+   <td><b>${actualPct===null?"—":actualPct.toFixed(1)+"%"}</b></td><td><b>${effectiveOwn(r).toFixed(1)}%</b></td><td><span class="pill">${ownershipSource(r)}</span></td><td><b>${fieldAvailability(r.team,activeWeek).toFixed(1)}%</b></td>
    <td>${r.future}</td><td>${tscore(r).toFixed(1)}</td></tr>`)
  });
  tb.querySelectorAll('input[data-i]').forEach(x=>x.onchange=e=>{
@@ -285,9 +284,13 @@ function renderBoard(){
    if(e.target.value==="") delete m[e.target.dataset.team];
    else m[e.target.dataset.team]=Number(e.target.value);
    localStorage.setItem(ownershipKey(activeWeek),JSON.stringify(m));
+   if($("historyWeek")&&Number($("historyWeek").value)===activeWeek)renderHistory();
    renderBoard();optimize();
  });
 }
+function historyTeams(w){const set=new Set(wr(w).map(r=>r.team)),p=actualOwnershipMap(w),rr=resultMap(w);Object.keys(p).forEach(t=>set.add(t));Object.keys(rr).forEach(t=>set.add(t));return [...set].sort();}
+function renderHistory(){if(!$("historyWeek"))return;const w=Number($("historyWeek").value||activeWeek),picks=actualOwnershipMap(w),results=resultMap(w),entrants=Number(localStorage.getItem(survivorsKey(w))||0)||(w===activeWeek?Number($("survivors")?.value||152):0);$("historyEntrants").value=entrants||"";let tp=0,win=0;$("historyBody").innerHTML=historyTeams(w).map(team=>{const c=Number(picks[team]),count=Number.isFinite(c)?c:0;tp+=count;const result=String(results[team]||"P").toUpperCase();if(result==="W")win+=count;const pp=entrants>0?100*count/entrants:null,effect=result==="W"&&count?`Burns ${pp.toFixed(1)}% of W${w} field`:result==="L"&&count?"Pickers eliminated":"No prior-field burn yet";return `<tr><td>${team}</td><td><input class="histCount" data-team="${team}" type="number" min="0" step="1" value="${count||""}" placeholder="0"></td><td>${pp===null?"—":pp.toFixed(1)+"%"}</td><td><select class="histResult" data-team="${team}"><option value="P" ${result==="P"?"selected":""}>Pending</option><option value="W" ${result==="W"?"selected":""}>Won</option><option value="L" ${result==="L"?"selected":""}>Lost</option></select></td><td class="tiny">${effect}</td></tr>`}).join("");$("historyPickTotal").textContent=tp.toLocaleString();$("historyWinningTotal").textContent=win.toLocaleString();let stored=0;for(let x=1;x<=18;x++)if(Object.keys(actualOwnershipMap(x)).length)stored++;$("historyStoredWeeks").textContent=stored;$("historyBody").querySelectorAll(".histCount").forEach(el=>el.onchange=e=>{const m=actualOwnershipMap(w),v=e.target.value;if(v==="")delete m[e.target.dataset.team];else m[e.target.dataset.team]=Math.max(0,Number(v)||0);localStorage.setItem(ownershipKey(w),JSON.stringify(m));renderHistory();renderBoard();optimize();});$("historyBody").querySelectorAll(".histResult").forEach(el=>el.onchange=e=>{const m=resultMap(w);m[e.target.dataset.team]=e.target.value;localStorage.setItem(resultKey(w),JSON.stringify(m));renderHistory();renderBoard();optimize();});}
+function initHistory(){if(!$("historyWeek"))return;$("historyWeek").innerHTML="";for(let w=1;w<=18;w++)$("historyWeek").add(new Option("Week "+w,w));$("historyWeek").value=activeWeek;$("loadHistoryWeek").onclick=renderHistory;$("historyWeek").onchange=renderHistory;$("historyEntrants").onchange=()=>{const w=Number($("historyWeek").value),n=Math.max(1,Number($("historyEntrants").value)||1);localStorage.setItem(survivorsKey(w),n);if(w===activeWeek&&$("survivors"))$("survivors").value=n;renderHistory();renderBoard();optimize();};renderHistory();}
 function renderPairs(){
   const arr=window.__entryBCandidates||[];
   if(!arr.length){$("pairs").innerHTML="";return;}
@@ -308,7 +311,7 @@ function renderPairs(){
   }).join("");
 }
 function updateWeights(){let v=+$("risk").value,w=W();$("riskV").textContent=v+" / 100";$("riskName").textContent=v<30?"Conservative":v<70?"Balanced":"Aggressive";$("weights").innerHTML=`Safety ${(w.s*100).toFixed(0)}% · ownership leverage ${(w.l*100).toFixed(0)}% · low future-cost ${(w.f*100).toFixed(0)}% · diversification bonus ${(w.d*100).toFixed(0)}%.`}
-function runMC(){if(!lastA[0]||!lastB[0])return;let a=lastA[0],b=lastB[0],m=pair(a,b),teams=wr(+$("currentWeek").value),N=+$("sims").value,pool=+$("pool").value,owns=teams.map(t=>Math.max(0,t.own/100)),sum=owns.reduce((x,y)=>x+y,0)||1,eq=0,aliveRuns=0,totalField=0;
+function runMC(){if(!lastA[0]||!lastB[0])return;let a=lastA[0],b=lastB[0],m=pair(a,b),teams=wr(+$("currentWeek").value),N=+$("sims").value,pool=+$("pool").value,owns=teams.map(t=>Math.max(0,effectiveOwn(t)/100)),sum=owns.reduce((x,y)=>x+y,0)||1,eq=0,aliveRuns=0,totalField=0;
  $("mcStatus").textContent="Running";for(let k=0;k<N;k++){let wins=teams.map(t=>Math.random()<t.p/100),field=0;for(let i=0;i<pool-2;i++){let r=Math.random()*sum,c=0,idx=owns.length-1;for(let j=0;j<owns.length;j++){c+=owns[j];if(r<=c){idx=j;break}}if(wins[idx])field++}let ia=teams.findIndex(t=>t.team===a.team),ib=teams.findIndex(t=>t.team===b.team),our=(wins[ia]?1:0)+(wins[ib]?1:0);if(our){aliveRuns++;totalField+=field+our;eq+=our/(field+our)}}$("mcPair").textContent=a.team+" + "+b.team;$("field").textContent=aliveRuns?(totalField/aliveRuns).toFixed(1):"—";$("equity").textContent=((eq/N)*100).toFixed(2)+"%";$("mcStatus").textContent="Done"}
 function americanToProb(v){let o=Number(String(v).replace("+",""));if(!Number.isFinite(o)||o===0)return null;return o<0?(-o)/((-o)+100):100/(o+100)}
 function eventTeamAbbr(side){
@@ -516,5 +519,5 @@ if($("survivors")){
 }
 
 $("risk").oninput=()=>{updateWeights()};$("risk").onchange=()=>{renderBoard();optimize()};$("opt").onclick=optimize;$("currentWeek").onchange=()=>{activeWeek=+$("currentWeek").value;if($("survivors"))$("survivors").value=localStorage.getItem(survivorsKey(activeWeek))||152;renderTabs();renderBoard();fillManualA();optimize()};$("usedA").onchange=optimize;$("usedB").onchange=optimize;$("reset").onclick=()=>{rows=structuredClone(SEED);localStorage.removeItem("survivor_final_rows");renderBoard();optimize()};$("manualA").onchange=optimize;$("mc").onclick=runMC;$("refreshAll").onclick=refreshEverything;$("refreshFuture").onclick=refreshFuture;$("refreshOdds").onclick=refreshOdds;$("refreshOwnership").onclick=refreshOwnership;
-recalcFutureValues();updateWeights();renderTabs();renderBoard();fillManualA();optimize();
+recalcFutureValues();initHistory();updateWeights();renderTabs();renderBoard();fillManualA();optimize();
 </script></body></html>

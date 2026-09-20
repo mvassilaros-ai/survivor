@@ -127,3 +127,7 @@ Long book-by-book detail is no longer shown in the main table. It remains availa
 - The optimizer uses actual ownership when entered; otherwise it falls back to projected ownership.
 - Refresh Everything updates projected ownership only and never overwrites actual pool counts.
 - Actual counts persist in browser localStorage by week.
+
+
+## V16 — Pool history + surviving-field availability
+Stores actual pick counts and results for every week, estimates team availability among the surviving field from prior winning selections, feeds that into leverage scoring, exposes Ownership Used/Source/Availability on the board, and recalculates immediately. Monte Carlo now uses effective ownership (actual when available). Aggregate pick history is necessarily an estimate without entrant-level paths.
